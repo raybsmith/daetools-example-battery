@@ -1,0 +1,31 @@
+# Vim files
+*.swp
+*.swo
+
+# Outputs users may generate
+*.m4v
+*.mp4
+*.avi
+*.png
+*.pdf
+*.zip
+
+# Python bytecode files
+__pycache__/
+
+# Generally ignore config files
+*.cfg
+# Except those in the configs directory
+!configs/*.cfg
+
+# Ignore general simulation output stuff
+history/
+sim_output*
+output_notes.txt
+
+# Misc
+venv/
+.remarkrc
+.vim
+*/.flake8
+utils.py
