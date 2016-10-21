@@ -135,16 +135,57 @@ class ModCell(daeModel):
         self.x_s = daeDomain("x_s", self, m, "X domain in separator")
         self.x_p = daeDomain("x_p", self, m, "X domain in positive electrode")
 
+        # Sub-models
+        self.particle_n = ModParticle("particle_n", self, Ds=Ds_n, U=U_n)
+        self.particle_n.DistributeOnDomain(self.x_n)
+        self.particle_p = ModParticle("particle_p", self, Ds=Ds_p, U=U_p)
+        self.particle_p.DistributeOnDomain(self.x_p)
+
+        # Ports
+        # negative electrode
+        self.portOut_n = portFromEtrode("portOutMacro_n", eOutletPort, self, "Port to particles")
+        self.portOut_n.DistributeOnDomain(self.x_n)
+        self.portIn_n = portFromParticle("portIn_n", eInletPort, self, "Port from particles")
+        self.portIn_n.DistributeOnDomain(self.x_n)
+        # positive electrode
+        self.portOut_p = portFromEtrode("portOutMacro_p", eOutletPort, self, "Port to particles")
+        self.portOut_p.DistributeOnDomain(self.x_p)
+        self.portIn_p = portFromParticle("portIn_p", eInletPort, self, "Port from particles")
+        self.portIn_p.DistributeOnDomain(self.x_p)
+
+        # Connect ports
+        # Are these distributed correctly?
+        # negative electrode
+        self.ConnectPorts(self.PortOutElyte_n, self.particle_n.portIn_2)
+        self.ConnectPorts(self.PortOutEtrode_n, self.particle_n.portIn_1)
+        self.ConnectPorts(self.PortIn_n, self.particle_n.portOut)
+        # positive electrode
+        self.ConnectPorts(self.PortOutElyte_p, self.particle_p.portIn_2)
+        self.ConnectPorts(self.PortOutEtrode_p, self.particle_p.portIn_1)
+        self.ConnectPorts(self.PortIn_p, self.particle_p.portOut)
+
         # Variables
-        # Concentration/potential in electrode regions of elyte
-        self.c_lyte = dae.daeVariable("c_lyte", conc_t, self, "Concentration in the elyte")
-        self.phi_applied = dae.daeVariable("phi_applied", elec_pot_t, self, "Elec. pot. in elyte")
-        self.c = dae.daeVariable("c", mole_frac_t, self, "Conc in solid")
-        self.c.DistributeOnDomain(self.x)
-        self.c.DistributeOnDomain(self.y)
-        self.mu = dae.daeVariable("mu", elec_pot_t, self, "chem pot. in solid")
-        self.mu.DistributeOnDomain(self.x)
-        self.mu.DistributeOnDomain(self.y)
+        # Concentration/potential in different regions of electrolyte and electrode
+        self.c_n = daeVariable("c_n", conc_t, self, "Concentration in the elyte in negative")
+        self.phi1_n = daeVariable("phi1_n", elec_pot_t, self, "Electric potential in the elyte in negative")
+        self.phi2_n = daeVariable("phi2_n", elec_pot_t, self, "Electric potential in bulk sld in negative")
+        self.c_n.DistributeOnDomain(self.x_n)
+        self.phi1_n.DistributeOnDomain(self.x_n)
+        self.phi2_n.DistributeOnDomain(self.x_n)
+        self.c_s = daeVariable("c_s", conc_t, self, "Concentration in the elyte in separator")
+        self.phi1_s = daeVariable("phi1_s", elec_pot_t, self, "Electric potential in the elyte in separator")
+        self.c_s.DistributeOnDomain(self.x_s)
+        self.phi1_s.DistributeOnDomain(self.x_s)
+        self.c_p = daeVariable("c_p", conc_t, self, "Concentration in the elyte in positive")
+        self.phi1_p = daeVariable("phi1_p", elec_pot_t, self, "Electric potential in the elyte in positive")
+        self.phi2_p = daeVariable("phi2_p", elec_pot_t, self, "Electric potential in bulk sld in positive")
+        self.c_p.DistributeOnDomain(self.x_p)
+        self.phi1_p.DistributeOnDomain(self.x_p)
+        self.phi2_p.DistributeOnDomain(self.x_p)
+        # Applied potential at the negative electrode
+        self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
+        self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
+        self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
         self.current = dae.daeVariable("current", dae.no_t, self, "Total current of the cell")
         self.dummyVar = dae.daeVariable("dummyVar", dae.no_t, self, "dummyVar")
 
@@ -152,29 +193,143 @@ class ModCell(daeModel):
         self.F = daeParameter("F", A*s/mol, self, "Faraday's constant")
         self.R = daeParameter("R", J/(mol*K), self, "Gas constant")
         self.T = daeParameter("T", K, self, "Temperature")
-        self.ap = daeParameter("a", 1/m, "Reacting area per electrode volume")
+        self.a_n = daeParameter("a_n", 1/m, "Reacting area per electrode volume, negative electrode")
+        self.a_p = daeParameter("a_p", 1/m, "Reacting area per electrode volume, positive electrode")
         self.BruggExp_n = daeParameter("BruggExp_n", unit(), "Bruggeman exponent in x_n")
+        self.BruggExp_s = daeParameter("BruggExp_s", unit(), "Bruggeman exponent in x_s")
         self.BruggExp_p = daeParameter("BruggExp_p", unit(), "Bruggeman exponent in x_p")
         self.poros_n = daeParameter("poros_n", unit(), "porosity in x_n")
+        self.poros_s = daeParameter("poros_s", unit(), "porosity in x_s")
         self.poros_p = daeParameter("poros_p", unit(), "porosity in x_p")
 
     def DeclareEquations(self):
         dae.daeModel.DeclareEquations(self)
+        V_thm = self.R() * self.T() / self.F()
+
+        # Set output port info
+        # negative electrode, c, phi1, phi2
+        eq = self.CreateEquation("portOut_n_c")
+        x_n = eq.DistributeOnDomain(self.x_n)
+        eq.Residual = self.portOut_n(x_n).c_2 - self.c_n(x_n)
+        eq = self.CreateEquation("portOutElyte_n_phi")
+        x_n = eq.DistributeOnDomain(self.x_n)
+        eq.Residual = self.portOut_n(x_n).phi_2 - self.phi2_n(x_n)
+        eq = self.CreateEquation("portOutEtrode_n")
+        x_n = eq.DistributeOnDomain(self.x_n)
+        eq.Residual = self.portOut_n(x_n).phi_1 - self.phi1_n(x_n)
+        # positive electrode, c, phi1, phi2
+        eq = self.CreateEquation("portOut_p_c")
+        x_p = eq.DistributeOnDomain(self.x_p)
+        eq.Residual = self.portOut_p(x_p).c_2 - self.c_p(x_p)
+        eq = self.CreateEquation("portOutElyte_p_phi")
+        x_p = eq.DistributeOnDomain(self.x_p)
+        eq.Residual = self.portOut_p(x_p).phi_2 - self.phi2_p(x_p)
+        eq = self.CreateEquation("portOutEtrode_p")
+        x_p = eq.DistributeOnDomain(self.x_p)
+        eq.Residual = self.portOut_p(x_p).phi_1 - self.phi1_p(x_p)
+
+        def i_lyte(kappa, dphidx, t_p, TF, c, dcdx):
+            i = -kappa * (dphidx + 2*V_thm*(1 - t_p)*TF*(1/c)*dcdx)
+            return i
+
+        def set_up_cons_eq(name, domain, cvar, phivar, poros, BruggExp):
+            eq = self.CreateEquation(name)
+            x = eq.DistributeOnDomain(domain, eOpenOpen)
+            c = cvar(x)
+            phi = phivar(x)
+            eff_factor = poros / (poros**BruggExp)
+            kappa_eff = eff_factor * kappa(c)
+            D_eff = eff_factor * D(c)
+            dcdx = d(c, domain, eCFDM)
+            dphidx = d(phi, domain, eCFDM)
+            return eq, c, phi, dcdx, dphidx, kappa_eff, D_eff
+
+        # Mass and charge conservation in separator
+        # mass
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "massCons_s", self.x_s, self.c_s, self.phi_s, self.poros_s(), self.BruggExp_s())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        t_m = 1 - t_p(c)
+        dt_mdx = d(t_m, self.x_s, eCFDM)
+        didx = d(i, self.x_s, eCFDM)
+        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
+        # charge
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "chargeCons_s", self.x_s, self.c_s, self.phi_s, self.poros_s(), self.BruggExp_s())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        eq.Residual = d(i, self.x_s, eCFDM)
+
+        # Mass and charge conservation in negative electrode
+        # mass
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "massCons_n", self.x_n, self.c_n, self.phi_n, self.poros_n(), self.BruggExp_n())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        t_m = 1 - t_p(c)
+        dt_mdx = d(t_m, self.x_s, eCFDM)
+        didx = d(i, self.x_s, eCFDM)
+        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
+        # charge
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "chargeCons_n", self.x_n, self.c_n, self.phi_n, self.poros_n(), self.BruggExp_n())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        eq.Residual = d(i, self.x_n, eCFDM) - self.a_n()*self.portIn_n(self.x_n).j_p
+
+        # Mass and charge conservation in positive electrode
+        # mass
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "massCons_p", self.x_p, self.c_p, self.phi_p, self.poros_p(), self.BruggExp_p())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        t_m = 1 - t_p(c)
+        dt_mdx = d(t_m, self.x_s, eCFDM)
+        didx = d(i, self.x_s, eCFDM)
+        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
+        # charge
+        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
+            "chargeCons_p", self.x_p, self.c_p, self.phi_p, self.poros_p(), self.BruggExp_p())
+        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
+        eq.Residual = d(i, self.x_p, eCFDM) - self.a_p()*self.portIn_n(self.x_p).j_p
+
+        # TODO:
+        #  apply dc/dx = 0 at far left of x_n and far right of x_p
+        #  apply phi = 0 at far left of x_n
+        #  apply dphi/dx = 0 at far right of x_p
+        #  figure out continuity to link the sections
+
+        # Electric potential in the electrodes. We assume infinite conductivity in the electron
+        # conducting phase for simplicity
+        # negative
+        eq = self.CreateEquation("phi1_n")
+        x_n = eq.DistributeOnDomain(self.x_n, eOpenOpen)
+        eq.Residual = d2(self.phi1_n(x_n), self.x_n, eCFDM)
+        # At current collector, phi1 = phiCC
+        eq = self.CreateEquation("phi1_n_left")
+        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
+        eq.Residual = self.phi1_n(x_n) - self.phiCC_n()
+        # At electrode-separator interface, no electric current can pass, so dphi/dx = 0
+        eq = self.CreateEquation("phi1_n_right")
+        x_n = eq.DistributeOnDomain(self.x_n, eUpperBound)
+        eq.Residual = d(self.phi1_n(x_n), self.x_n, eCFDM)
+        # positive
+        eq = self.CreateEquation("phi1_p")
+        x_p = eq.DistributeOnDomain(self.x_p, eOpenOpen)
+        eq.Residual = d2(self.phi1_p(x_p), self.x_p, eCFDM)
+        # At electrode-separator interface, no electric current can pass, so dphi/dx = 0
+        eq = self.CreateEquation("phi1_n_left")
+        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
+        eq.Residual = d(self.phi1_n(x_n), self.x_n, eCFDM)
+        # At current collector, phi1 = phiCC
+        eq = self.CreateEquation("phi1_n_right")
+        x_n = eq.DistributeOnDomain(self.x_n, eUpperBound)
+        eq.Residual = self.phi1_n(x_n) - self.phiCC_n()
 
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
         eq.Residual = self.current()
-        Nx, Ny = self.x.NumberOfPoints, self.y.NumberOfPoints
-        c_rb = self.c.array(Nx-1, '*')
-        dmu_rb = self.mu.d_array(self.x, Nx-1, '*')
-        c_tb = self.c.array('*', Ny-1)
-        dmu_tb = self.mu.d_array(self.y, '*', Ny-1)
-        eq.Residual -= dae.Integral(Dfunc(c_rb)*dmu_rb)
-        eq.Residual -= dae.Integral(Dfunc(c_tb)*dmu_tb)
+        # TODO: Substract integral of a_p*j_p
 
-        # For this simplified simulation, keep the electrolyte constant
-        eq = self.CreateEquation("elyte_c")
-        eq.Residual = self.c_lyte.dt()
+        # Define the measured voltage
+        eq = self.CreateEquation("Voltage")
+        eq.Residual = self.phiCC_p() - self.phiCC_n()
 
         if ndD["profileType"] == "CC":
             # Total Current Constraint Equation
