@@ -126,9 +126,9 @@ class ModParticle(daeModel):
 
 
 class ModCell(daeModel):
-    def __init__(self, Name, Parent=None, Description="", ndD=None):
+    def __init__(self, Name, Parent=None, Description="", process_info=None):
         daeModel.__init__(self, Name, Parent, Description)
-        self.ndD = ndD
+        self.process_info = process_info
 
         # Domains where variables are distributed
         self.x_n = daeDomain("x_n", self, m, "X domain in negative electrode")
@@ -189,7 +189,6 @@ class ModCell(daeModel):
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
         self.current = dae.daeVariable("current", dae.no_t, self, "Total current of the cell")
-        self.dummyVar = dae.daeVariable("dummyVar", dae.no_t, self, "dummyVar")
 
         # Parameters
         self.F = daeParameter("F", A*s/mol, self, "Faraday's constant")
@@ -246,7 +245,7 @@ class ModCell(daeModel):
             dphidx = d(phi, domain, eCFDM)
             return eq, c, phi, dcdx, dphidx, kappa_eff, D_eff
 
-        # Mass and charge conservation in separator
+        # Electrolyte: mass and charge conservation in separator
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
             "massCons_s", self.x_s, self.c_s, self.phi_s, self.poros_s(), self.BruggExp_s())
@@ -261,7 +260,7 @@ class ModCell(daeModel):
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_s, eCFDM)
 
-        # Mass and charge conservation in negative electrode
+        # Electrolyte: mass and charge conservation in negative electrode
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
             "massCons_n", self.x_n, self.c_n, self.phi_n, self.poros_n(), self.BruggExp_n())
@@ -276,7 +275,7 @@ class ModCell(daeModel):
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_n, eCFDM) - self.a_n()*self.portIn_n(self.x_n).j_p
 
-        # Mass and charge conservation in positive electrode
+        # Electrolyte: mass and charge conservation in positive electrode
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
             "massCons_p", self.x_p, self.c_p, self.phi2_p, self.poros_p(), self.BruggExp_p())
@@ -291,14 +290,27 @@ class ModCell(daeModel):
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_p, eCFDM) - self.a_p()*self.portIn_n(self.x_p).j_p
 
+        # Electrolyte: current collector BC's on concentration:
+        eq = self.CreateEquation("BC_c_CC_n", "BC for c at the negative current collector")
+        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
+        eq.Residual = d(self.c(x_n), self.x_n, eCFDM)
+        eq = self.CreateEquation("BC_c_CC_p", "BC for c at the positive current collector")
+        x_p = eq.DistributeOnDomain(self.x_p, eUpperBound)
+        eq.Residual = d(self.c(x_p), self.x_p, eCFDM)
+
+        # Electrolyte: current collector BC's on phi in electrolyte:
+        eq = self.CreateEquation("BC_phi_CC_n", "BC for phi at the negative current collector")
+        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
+        eq.Residual = self.phi2_n(x_n)  # arbitrary datum for phi field
+        eq = self.CreateEquation("BC_phi_CC_p", "BC for phi at the positive current collector")
+        x_p = eq.DistributeOnDomain(self.x_p, eUpperBound)
+        eq.Residual = d(self.phi2_p(x_n), self.x_p, eCFDM)
+
         # TODO:
-        #  apply dc/dx = 0 at far left of x_n and far right of x_p
-        #  apply phi = 0 at far left of x_n
-        #  apply dphi/dx = 0 at far right of x_p
         #  figure out continuity to link the sections
 
-        # Electric potential in the electrodes. We assume infinite conductivity in the electron
-        # conducting phase for simplicity
+        # Electrode: charge conservation:
+        # Note, we assume infinite conductivity in the electron conducting phase for simplicity
         # negative
         eq = self.CreateEquation("phi1_n")
         x_n = eq.DistributeOnDomain(self.x_n, eOpenOpen)
@@ -333,29 +345,17 @@ class ModCell(daeModel):
         eq = self.CreateEquation("Voltage")
         eq.Residual = self.phiCC_p() - self.phiCC_n()
 
-        if ndD["profileType"] == "CC":
+        tend, tramp = self.process_info["tend"], self.process_info["tramp"]
+        if self.process_info["profileType"] == "CC":
             # Total Current Constraint Equation
             eq = self.CreateEquation("Total_Current_Constraint")
             eq.Residual = self.current() - (
-                ndD["currPrev"] + (ndD["currset"] - ndD["currPrev"])
-                * (1 - np.exp(-dae.Time()/(ndD["tend"]*ndD["tramp"]))))
-        elif ndD["profileType"] == "CV":
+                ndD["currset"] * (1 - np.exp(-dae.Time()/(tend*tramp))))
+        elif self.process_info["profileType"] == "CV":
             # Keep applied potential constant
             eq = self.CreateEquation("applied_potential")
             eq.Residual = self.phi_applied() - (
-                ndD["phiPrev"] + (ndD["Vset"] - ndD["phiPrev"])
-                * (1 - np.exp(-dae.Time()/(ndD["tend"]*ndD["tramp"])))
-                )
+                ndD["Vset"] * (1 - np.exp(-dae.Time()/(tend*tramp))))
 
         for eq in self.Equations:
             eq.CheckUnitsConsistency = False
-
-        if ndD["profileType"] == "CC":
-            # Set the condition to terminate the simulation upon reaching
-            # a cutoff voltage.
-            self.stopCondition = (
-                ((self.phi_applied() <= ndD["phimin"])
-                    | (self.phi_applied() >= ndD["phimax"]))
-                & (self.dummyVar() < 1))
-            self.ON_CONDITION(self.stopCondition,
-                              setVariableValues=[(self.dummyVar, 2)])
