@@ -8,6 +8,7 @@
 *.avi
 *.png
 *.pdf
+*.svg
 *.zip
 
 # Python bytecode files
