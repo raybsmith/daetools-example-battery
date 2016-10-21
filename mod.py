@@ -202,6 +202,8 @@ class ModCell(daeModel):
         self.poros_n = daeParameter("poros_n", unit(), "porosity in x_n")
         self.poros_s = daeParameter("poros_s", unit(), "porosity in x_s")
         self.poros_p = daeParameter("poros_p", unit(), "porosity in x_p")
+        self.currset = daeParameter("currset", A/m**3, "current per volume of active material")
+        self.Vset = daeParameter("Vset", V, "applied voltage set point")
 
     def DeclareEquations(self):
         dae.daeModel.DeclareEquations(self)
@@ -310,7 +312,7 @@ class ModCell(daeModel):
         #  figure out continuity to link the sections
 
         # Electrode: charge conservation:
-        # Note, we assume infinite conductivity in the electron conducting phase for simplicity
+        # We assume infinite conductivity in the electron conducting phase for simplicity
         # negative
         eq = self.CreateEquation("phi1_n")
         x_n = eq.DistributeOnDomain(self.x_n, eOpenOpen)
@@ -345,17 +347,16 @@ class ModCell(daeModel):
         eq = self.CreateEquation("Voltage")
         eq.Residual = self.phiCC_p() - self.phiCC_n()
 
-        tend, tramp = self.process_info["tend"], self.process_info["tramp"]
-        if self.process_info["profileType"] == "CC":
+        pinfo = self.process_info
+        tend, tramp = pinfo["tend"], pinfo["tramp"]
+        if pinfo["profileType"] == "CC":
             # Total Current Constraint Equation
             eq = self.CreateEquation("Total_Current_Constraint")
-            eq.Residual = self.current() - (
-                ndD["currset"] * (1 - np.exp(-dae.Time()/(tend*tramp))))
-        elif self.process_info["profileType"] == "CV":
+            eq.Residual = self.current() - self.currset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
+        elif pinfo["profileType"] == "CV":
             # Keep applied potential constant
             eq = self.CreateEquation("applied_potential")
-            eq.Residual = self.phi_applied() - (
-                ndD["Vset"] * (1 - np.exp(-dae.Time()/(tend*tramp))))
+            eq.Residual = self.V() - self.Vset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
 
         for eq in self.Equations:
             eq.CheckUnitsConsistency = False
