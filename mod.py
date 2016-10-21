@@ -147,18 +147,10 @@ class ModCell(daeModel):
         self.R = daeParameter("R", J/(mol*K), self, "Gas constant")
         self.T = daeParameter("T", K, self, "Temperature")
         self.ap = daeParameter("a", 1/m, "Reacting area per electrode volume")
-        self.n = daeParameter("n", unit(), "Number of electrons per reaction")
-        self.s_p = daeParameter("s_p", unit(), "Stoichiometric number of cation in reaction")
-        self.s_m = daeParameter("s_m", unit(), "Stoichiometric number of anion in reaction")
-        self.nu_p = daeParameter("nu_p", unit(), "Stoichiometric number of cation in salt")
-        self.nu_m = daeParameter("nu_m", unit(), "Stoichiometric number of anion in salt")
-        self.z_p = daeParameter("z_p", unit(), "Valence number of cation")
-        self.z_m = daeParameter("z_m", unit(), "Valence number of anion")
         self.BruggExp_n = daeParameter("BruggExp_n", unit(), "Bruggeman exponent in x_n")
         self.BruggExp_p = daeParameter("BruggExp_p", unit(), "Bruggeman exponent in x_p")
         self.poros_n = daeParameter("poros_n", unit(), "porosity in x_n")
         self.poros_p = daeParameter("poros_p", unit(), "porosity in x_p")
-        self.nu = self.nu_p() + self.nu_m()
 
     def DeclareEquations(self):
         dae.daeModel.DeclareEquations(self)
