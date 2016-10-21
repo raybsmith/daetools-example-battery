@@ -357,6 +357,3 @@ class ModCell(daeModel):
             # Keep applied potential constant
             eq = self.CreateEquation("applied_potential")
             eq.Residual = self.V() - self.Vset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
-
-        for eq in self.Equations:
-            eq.CheckUnitsConsistency = False
