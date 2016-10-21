@@ -21,12 +21,12 @@ rxn_t = daeVariableType(
 
 
 def kappa(c):
-    out = 1  # S/m
+    out = 1 * S/m
     return out
 
 
 def D(c):
-    out = 1e-10  # m^2/s
+    out = 1e-10 * m**2/s
     return out
 
 
@@ -41,22 +41,22 @@ def t_p(c):
 
 
 def Ds_n(c):
-    out = 1e-12  # m^2/s
+    out = 1e-12 * m**2/s
     return out
 
 
 def Ds_p(c):
-    out = 1e-12  # m^2/s
+    out = 1e-12 * m**2/s
     return out
 
 
 def U_n(c):
-    out = 0.1  # V
+    out = 0.1 * V
     return out
 
 
 def U_p(c):
-    out = 2.0  # V
+    out = 2.0 * V
     return out
 
 
@@ -154,7 +154,9 @@ class ModCell(daeModel):
         self.portIn_p.DistributeOnDomain(self.x_p)
 
         # Connect ports
-        # Are these distributed correctly?
+        # Note: Are these distributed correctly?
+        # There should be one port defined for each "particle" sub-model, one of which exists at each grid point within
+        # the electrodes, and each of these ports should be connected to the corresponding port in the particle model.
         # negative electrode
         self.ConnectPorts(self.PortOutElyte_n, self.particle_n.portIn_2)
         self.ConnectPorts(self.PortOutEtrode_n, self.particle_n.portIn_1)
@@ -167,18 +169,18 @@ class ModCell(daeModel):
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
         self.c_n = daeVariable("c_n", conc_t, self, "Concentration in the elyte in negative")
-        self.phi1_n = daeVariable("phi1_n", elec_pot_t, self, "Electric potential in the elyte in negative")
-        self.phi2_n = daeVariable("phi2_n", elec_pot_t, self, "Electric potential in bulk sld in negative")
+        self.phi1_n = daeVariable("phi2_n", elec_pot_t, self, "Electric potential in bulk sld in negative")
+        self.phi2_n = daeVariable("phi1_n", elec_pot_t, self, "Electric potential in the elyte in negative")
         self.c_n.DistributeOnDomain(self.x_n)
         self.phi1_n.DistributeOnDomain(self.x_n)
         self.phi2_n.DistributeOnDomain(self.x_n)
         self.c_s = daeVariable("c_s", conc_t, self, "Concentration in the elyte in separator")
-        self.phi1_s = daeVariable("phi1_s", elec_pot_t, self, "Electric potential in the elyte in separator")
+        self.phi2_s = daeVariable("phi1_s", elec_pot_t, self, "Electric potential in the elyte in separator")
         self.c_s.DistributeOnDomain(self.x_s)
-        self.phi1_s.DistributeOnDomain(self.x_s)
+        self.phi2_s.DistributeOnDomain(self.x_s)
         self.c_p = daeVariable("c_p", conc_t, self, "Concentration in the elyte in positive")
-        self.phi1_p = daeVariable("phi1_p", elec_pot_t, self, "Electric potential in the elyte in positive")
-        self.phi2_p = daeVariable("phi2_p", elec_pot_t, self, "Electric potential in bulk sld in positive")
+        self.phi1_p = daeVariable("phi2_p", elec_pot_t, self, "Electric potential in bulk sld in positive")
+        self.phi2_p = daeVariable("phi1_p", elec_pot_t, self, "Electric potential in the elyte in positive")
         self.c_p.DistributeOnDomain(self.x_p)
         self.phi1_p.DistributeOnDomain(self.x_p)
         self.phi2_p.DistributeOnDomain(self.x_p)
@@ -277,7 +279,7 @@ class ModCell(daeModel):
         # Mass and charge conservation in positive electrode
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_p", self.x_p, self.c_p, self.phi_p, self.poros_p(), self.BruggExp_p())
+            "massCons_p", self.x_p, self.c_p, self.phi2_p, self.poros_p(), self.BruggExp_p())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         t_m = 1 - t_p(c)
         dt_mdx = d(t_m, self.x_s, eCFDM)
@@ -285,7 +287,7 @@ class ModCell(daeModel):
         eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
         # charge
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_p", self.x_p, self.c_p, self.phi_p, self.poros_p(), self.BruggExp_p())
+            "chargeCons_p", self.x_p, self.c_p, self.phi2_p, self.poros_p(), self.BruggExp_p())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_p, eCFDM) - self.a_p()*self.portIn_n(self.x_p).j_p
 
