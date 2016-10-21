@@ -35,7 +35,7 @@ def thermodynamic_factor(c):
     return out
 
 
-def tp(c):
+def t_p(c):
     out = 0.3
     return out
 
@@ -60,15 +60,16 @@ def U_p(c):
     return out
 
 
-class portFromElyte(daePort):
+class portFromMacro(daePort):
     def __int__(self, Name, PortType, Model, Description):
         self.c_2 = daeVariable("c_2", conc_t, self, "Concentration in electrolyte")
-        self.phi_2 = daeVariable("phi_2", conc_t, self, "Electric potential in electrolyte")
+        self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
+        self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
 
 
-class portFromEtrode(daePort):
+class portFromParticle(daePort):
     def __int__(self, Name, PortType, Model, Description):
-        self.phi_1 = daeVariable("phi_1", conc_t, self, "Electric potential in electrode")
+        self.j_p = daeVariable("j_p", rxn_t, self, "Reaction rate at particle surface")
 
 
 class ModParticle(daeModel):
@@ -86,12 +87,13 @@ class ModParticle(daeModel):
         # Parameter
         self.w = daeParameter("w", m**2, self, "Weight factor for operators")
         self.w.DistributeOnDomain(self.r)
-        self.i_0 = daeParameter("i_0", A/m**2, self, "Exchange current density")
+        self.i_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
 
         # Ports
         self.portIn_2 = portFromElyte("portInLyte", eInletPort, self, "inlet port from elyte")
         self.portIn_1 = portFromEtrode("portInEtrode", eInletPort, self, "inet port from e- conducting phase")
+        self.portOut = portFromParticle("portOut", eOutletPort, self, "outlet to elyte")
         self.phi_2 = self.portInLyte.phi_2
         self.c_2 = self.portInLyte.c_2
         self.phi_1 = self.portInBulk.phi_1
@@ -105,18 +107,22 @@ class ModParticle(daeModel):
         eq.Residual = dt(c) - 1/self.w()*d(self.w() * D_s(c)*d(c, self.r, eCFDM), self.r, eCFDM)
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
-        r = eq.DistributeOnDomain(self.r, eClosedOpen)
+        r = eq.DistributeOnDomain(self.r, eLowerBound)
         c = self.c(r)
         eq.Residual = d(c, self.r, eCFDM)
 
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
-        r = eq.DistributeOnDomain(self.r, eOpenClosed)
+        r = eq.DistributeOnDomain(self.r, eUpperBound)
         c = self.c(r)
         eq.Residual = D_s(c) * d(c, self.r, eCFDM) - self.j_p()
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         eta = self.phi_1() - self.phi_2() - U(c)
-        eq.Residual = self.j_p() - self.i_0() * (Exp(-alpha*eta) - Exp((1 - alpha)*eta))
+        eq.Residual = self.j_p() - self.j_0() * (Exp(-alpha*eta) - Exp((1 - alpha)*eta))
+
+        # Set output port info
+        eq = self.CreateEquation("portOut")
+        eq.Residual = self.portOut.j_p() - self.j_p()
 
 
 class ModCell(daeModel):
