@@ -4,9 +4,9 @@ import numpy as np
 from dae.pyUnits import m, s, K, mol, J, A
 V = J/(A*s)
 
-F = 96485.34  # A s / mol
-R = 8.31447  # J / (mol K)
-T = 298  # K
+F = 96485.34 * A*s/mol
+R = 8.31447 * J/(mol*K)
+T = 298 * K
 
 # Define some variable types
 conc_t = daeVariableType(
