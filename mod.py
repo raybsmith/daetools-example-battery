@@ -169,22 +169,21 @@ class ModCell(daeModel):
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
         self.c_n = daeVariable("c_n", conc_t, self, "Concentration in the elyte in negative")
-        self.phi1_n = daeVariable("phi2_n", elec_pot_t, self, "Electric potential in bulk sld in negative")
-        self.phi2_n = daeVariable("phi1_n", elec_pot_t, self, "Electric potential in the elyte in negative")
+        self.phi1_n = daeVariable("phi1_n", elec_pot_t, self, "Electric potential in bulk sld in negative")
+        self.phi2_n = daeVariable("phi2_n", elec_pot_t, self, "Electric potential in the elyte in negative")
         self.c_n.DistributeOnDomain(self.x_n)
         self.phi1_n.DistributeOnDomain(self.x_n)
         self.phi2_n.DistributeOnDomain(self.x_n)
         self.c_s = daeVariable("c_s", conc_t, self, "Concentration in the elyte in separator")
-        self.phi2_s = daeVariable("phi1_s", elec_pot_t, self, "Electric potential in the elyte in separator")
+        self.phi2_s = daeVariable("phi2_s", elec_pot_t, self, "Electric potential in the elyte in separator")
         self.c_s.DistributeOnDomain(self.x_s)
         self.phi2_s.DistributeOnDomain(self.x_s)
         self.c_p = daeVariable("c_p", conc_t, self, "Concentration in the elyte in positive")
-        self.phi1_p = daeVariable("phi2_p", elec_pot_t, self, "Electric potential in bulk sld in positive")
-        self.phi2_p = daeVariable("phi1_p", elec_pot_t, self, "Electric potential in the elyte in positive")
+        self.phi1_p = daeVariable("phi1_p", elec_pot_t, self, "Electric potential in bulk sld in positive")
+        self.phi2_p = daeVariable("phi2_p", elec_pot_t, self, "Electric potential in the elyte in positive")
         self.c_p.DistributeOnDomain(self.x_p)
         self.phi1_p.DistributeOnDomain(self.x_p)
         self.phi2_p.DistributeOnDomain(self.x_p)
-        # Applied potential at the negative electrode
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
@@ -250,7 +249,7 @@ class ModCell(daeModel):
         # Electrolyte: mass and charge conservation in separator
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_s", self.x_s, self.c_s, self.phi_s, self.poros_s(), self.BruggExp_s())
+            "massCons_s", self.x_s, self.c_s, self.phi2_s, self.poros_s(), self.BruggExp_s())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         t_m = 1 - t_p(c)
         dt_mdx = d(t_m, self.x_s, eCFDM)
@@ -258,14 +257,14 @@ class ModCell(daeModel):
         eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
         # charge
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_s", self.x_s, self.c_s, self.phi_s, self.poros_s(), self.BruggExp_s())
+            "chargeCons_s", self.x_s, self.c_s, self.phi2_s, self.poros_s(), self.BruggExp_s())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_s, eCFDM)
 
         # Electrolyte: mass and charge conservation in negative electrode
         # mass
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_n", self.x_n, self.c_n, self.phi_n, self.poros_n(), self.BruggExp_n())
+            "massCons_n", self.x_n, self.c_n, self.phi2_n, self.poros_n(), self.BruggExp_n())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         t_m = 1 - t_p(c)
         dt_mdx = d(t_m, self.x_s, eCFDM)
@@ -273,7 +272,7 @@ class ModCell(daeModel):
         eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
         # charge
         eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_n", self.x_n, self.c_n, self.phi_n, self.poros_n(), self.BruggExp_n())
+            "chargeCons_n", self.x_n, self.c_n, self.phi2_n, self.poros_n(), self.BruggExp_n())
         i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
         eq.Residual = d(i, self.x_n, eCFDM) - self.a_n()*self.portIn_n(self.x_n).j_p
 
@@ -308,8 +307,20 @@ class ModCell(daeModel):
         x_p = eq.DistributeOnDomain(self.x_p, eUpperBound)
         eq.Residual = d(self.phi2_p(x_n), self.x_p, eCFDM)
 
-        # TODO:
-        #  figure out continuity to link the sections
+        # Tie regions together
+        # Assume continuity of field variables at electrode-separator interfaces
+        # negative-separator
+        eq = self.CreateEquation("ns_c_cont", "continuity of c at the negative-separator interface")
+        eq.Residual = self.c_s(0) - self.c_n(self.x_n.NumberOfPoints - 1)
+        eq = self.CreateEquation("ns_phi_cont", "continuity of phi at the negative-separator interface")
+        eq.Residual = self.phi2_s(0) - self.phi2_n(self.x_n.NumberOfPoints - 1)
+        # separator-positive
+        eq = self.CreateEquation("sp_c_cont", "continuity of c at the separator-positive interface")
+        eq.Residual = self.c_s(self.x_s.NumberOfPoints - 1) - self.c_p(0)
+        eq = self.CreateEquation("sp_phi_cont", "continuity of phi at the separator-positive interface")
+        eq.Residual = self.phi2_s(self.x_s.NumberOfPoints - 1) - self.phi2_p(0)
+
+        # TODO: Derive finite difference coefficients for non-uniform grid spacing
 
         # Electrode: charge conservation:
         # We assume infinite conductivity in the electron conducting phase for simplicity
