@@ -3,6 +3,7 @@ import numpy as np
 
 from pyUnits import m, s, K, mol, J, A
 V = J/(A*s)
+S = A/V
 
 # Define some variable types
 conc_t = daeVariableType(
@@ -23,35 +24,47 @@ process_info = {"profileType": "CC",
                 }
 
 def kappa(c):
-    out = 1 * S/m
+    """Return the conductivity of the electrolyte in S/m as a function of concentration in M."""
+    out = 1  # S/m
     return out
 
 def D(c):
-    out = 1e-10 * m**2/s
+    """Return electrolyte diffusivity (in m^2/s) as a function of concentration in M."""
+    out = 1e-10  # m**2/s
     return out
 
 def thermodynamic_factor(c):
+    """Return the electrolyte thermodynamic factor as a function of concentration in M."""
     out = 1
     return out
 
 def t_p(c):
-    out = 0.3
+    """Return the electrolyte cation transference number as a function of concentration in M."""
+    out = 0.3 * c/c
     return out
 
-def Ds_n(c):
-    out = 1e-12 * m**2/s
+def Ds_n(y):
+    """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
+    out = 1e-12  # m**2/s
     return out
 
-def Ds_p(c):
-    out = 1e-12 * m**2/s
+def Ds_p(y):
+    """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
+    out = 1e-12  # m**2/s
     return out
 
-def U_n(c):
-    out = 0.1 * V
+def U_n(y):
+    """Return the equilibrium potential (V vs Li) of the negative electrode active material
+    as a function of solid filling fraction, y.
+    """
+    out = 0.1  # V
     return out
 
-def U_p(c):
-    out = 2.0 * V
+def U_p(y):
+    """Return the equilibrium potential (V vs Li) of the positive electrode active material
+    as a function of solid filling fraction, y.
+    """
+    out = 2.0  # V
     return out
 
 class portFromMacro(daePort):
@@ -86,6 +99,8 @@ class ModParticle(daeModel):
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
+        self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity in the solid")
+        self.U_ref = daeParameter("U_ref", V, self, "Reference units for equilibrium voltage of the solid")
 
         # Ports
         self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
@@ -100,7 +115,7 @@ class ModParticle(daeModel):
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
         w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
+        eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
         r = eq.DistributeOnDomain(self.r, eLowerBound)
@@ -110,11 +125,12 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
         r = eq.DistributeOnDomain(self.r, eUpperBound)
         c = self.c(r)
-        eq.Residual = D_s(c) * d(c, self.r, eCFDM) - self.j_p()
+        eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
-        eta = self.phi_1() - self.phi_2() - self.U(c)
-        eq.Residual = self.j_p() - self.j_0() * (Exp(-alpha*eta) - Exp((1 - alpha)*eta))
+        c_surf = self.c(self.r.NumberOfPoints - 1)
+        eta = self.phi_1() - self.phi_2() - self.U_ref()*self.U(c_surf/self.c_ref())
+        eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta) - Exp((1 - self.alpha())*eta))
 
         # Set output port info
         eq = self.CreateEquation("portOut")
@@ -200,6 +216,9 @@ class ModCell(daeModel):
         self.poros_n = daeParameter("poros_n", unit(), self, "porosity in x_n")
         self.poros_s = daeParameter("poros_s", unit(), self, "porosity in x_s")
         self.poros_p = daeParameter("poros_p", unit(), self, "porosity in x_p")
+        self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity")
+        self.cond_ref = daeParameter("cond_ref", S/m, self, "Reference units for conductivity")
+        self.c_ref = daeParameter("c_ref", mol/m**3, self, "Reference electrolyte concentration")
         self.currset = daeParameter("currset", A/m**3, self, "current per volume of active material")
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
 
@@ -237,8 +256,8 @@ class ModCell(daeModel):
             c = cvar(x)
             phi = phivar(x)
             eff_factor = poros / (poros**BruggExp)
-            kappa_eff = eff_factor * kappa(c)
-            D_eff = eff_factor * D(c)
+            kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
+            D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
             dcdx = d(c, domain, eCFDM)
             dphidx = d(phi, domain, eCFDM)
             return eq, c, phi, dcdx, dphidx, kappa_eff, D_eff
@@ -490,6 +509,9 @@ class SimBattery(daeSimulation):
         self.m.poros_p.SetValue(0.3)
         self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*3/self.Rp_n)
         self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*3/self.Rp_p)
+        self.m.D_ref.SetValue(1 * m**2/s)
+        self.m.cond_ref.SetValue(1 * S/m)
+        self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.currset.SetValue(1e-4 * A/m**3)
         self.m.Vset.SetValue(1.9 * V)
         # Parameters in each particle
@@ -502,6 +524,8 @@ class SimBattery(daeSimulation):
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
+            p.D_ref.SetValue(1 * m**2/s)
+            p.U_ref.SetValue(1 * V)
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
@@ -511,6 +535,8 @@ class SimBattery(daeSimulation):
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
+            p.D_ref.SetValue(1 * m**2/s)
+            p.U_ref.SetValue(1 * V)
 
     def SetUpVariables(self):
         cs0_n = self.ff0_n * self.csmax_n
