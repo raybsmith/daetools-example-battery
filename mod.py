@@ -87,7 +87,7 @@ class ModParticle(daeModel):
         # Parameter
         self.w = daeParameter("w", m**2, self, "Weight factor for operators")
         self.w.DistributeOnDomain(self.r)
-        self.i_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
+        self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
 
         # Ports
@@ -432,7 +432,7 @@ class ModCell(daeModel):
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
         eq.Residual = self.current()
-        # TODO: Substract integral of a_p*j_p
+        # TODO: Substract integral of F*a_p*j_p
 
         # Define the measured voltage
         eq = self.CreateEquation("Voltage")
