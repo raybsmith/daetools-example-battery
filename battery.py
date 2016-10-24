@@ -127,33 +127,36 @@ class ModCell(daeModel):
         self.x_p = daeDomain("x_p", self, m, "X domain in positive electrode")
 
         # Sub-models
-        self.particle_n = ModParticle("particle_n", self, Ds=Ds_n, U=U_n)
-        self.particle_n.DistributeOnDomain(self.x_n)
-        self.particle_p = ModParticle("particle_p", self, Ds=Ds_p, U=U_p)
-        self.particle_p.DistributeOnDomain(self.x_p)
+        N_n = self.x_n.NumberOfPoints
+        N_p = self.x_p.NumberOfPoints
+        self.particles_n = []
+        self.particles_p = []
+        for indx_n in range(N_n):
+            self.particles_n.append(ModParticle("particle_n_{}".format(indx_n), self, Ds=Ds_n, U=U_n))
+        for indx_p in range(N_p):
+            self.particles_p.append(ModParticle("particle_p_{}".format(indx_p), self, Ds=Ds_p, U=U_p))
 
         # Ports
+        self.portsOut_n = []
+        self.portsIn_n = []
+        self.portsOut_p = []
+        self.portsIn_p = []
         # negative electrode
-        self.portOut_n = portFromMacro("portOutMacro_n", eOutletPort, self, "Port to particles")
-        self.portOut_n.DistributeOnDomain(self.x_n)
-        self.portIn_n = portFromParticle("portIn_n", eInletPort, self, "Port from particles")
-        self.portIn_n.DistributeOnDomain(self.x_n)
+        for indx_n in range(N_n):
+            self.portsOut_n.append(portFromMacro("portOut_n_{}".format(indx_n), eOutletPort, self, "To particle"))
+            self.portsIn_n.append(portFromParticle("portIn_n_{}".format(indx_n), eOutletPort, self, "From particle"))
         # positive electrode
-        self.portOut_p = portFromMacro("portOutMacro_p", eOutletPort, self, "Port to particles")
-        self.portOut_p.DistributeOnDomain(self.x_p)
-        self.portIn_p = portFromParticle("portIn_p", eInletPort, self, "Port from particles")
-        self.portIn_p.DistributeOnDomain(self.x_p)
+        for indx_p in range(N_p):
+            self.portsOut_p.append(portFromMacro("portOut_p_{}".format(indx_p), eOutletPort, self, "To particle"))
+            self.portsIn_p.append(portFromParticle("portIn_p_{}".format(indx_p), eOutletPort, self, "From particle"))
 
         # Connect ports
-        # Note: Are these distributed correctly?
-        # There should be one port defined for each "particle" sub-model, one of which exists at each grid point within
-        # the electrodes, and each of these ports should be connected to the corresponding port in the particle model.
-        # negative electrode
-        self.ConnectPorts(self.PortOut_n, self.particle_n.portIn)
-        self.ConnectPorts(self.PortIn_n, self.particle_n.portOut)
-        # positive electrode
-        self.ConnectPorts(self.PortOut_p, self.particle_p.portIn)
-        self.ConnectPorts(self.PortIn_p, self.particle_p.portOut)
+        for indx_n in range(N_n):
+            self.ConnectPorts(self.portsOut_n[indx_n], self.particles_n[indx_n].portIn)
+            self.ConnectPorts(self.portsIn_n[indx_n], self.particles_n[indx_n].portOut)
+        for indx_p in range(N_p):
+            self.ConnectPorts(self.portsOut_p[indx_p], self.particles_p[indx_p].portIn)
+            self.ConnectPorts(self.portsIn_p[indx_p], self.particles_p[indx_p].portOut)
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -200,28 +203,25 @@ class ModCell(daeModel):
         dae.daeModel.DeclareEquations(self)
         pinfo = self.process_info
         V_thm = self.R() * self.T() / self.F()
+        N_n, N_s, N_p = self.x_n.NumberOfPoints, self.x_s.NumberOfPoints, self.x_p.NumberOfPoints
 
-        # Set output port info
-        # negative electrode, c, phi1, phi2
-        eq = self.CreateEquation("portOut_n_c")
-        x_n = eq.DistributeOnDomain(self.x_n)
-        eq.Residual = self.portOut_n(x_n).c_2 - self.c_n(x_n)
-        eq = self.CreateEquation("portOutElyte_n_phi")
-        x_n = eq.DistributeOnDomain(self.x_n)
-        eq.Residual = self.portOut_n(x_n).phi_2 - self.phi2_n(x_n)
-        eq = self.CreateEquation("portOutEtrode_n")
-        x_n = eq.DistributeOnDomain(self.x_n)
-        eq.Residual = self.portOut_n(x_n).phi_1 - self.phi1_n(x_n)
-        # positive electrode, c, phi1, phi2
-        eq = self.CreateEquation("portOut_p_c")
-        x_p = eq.DistributeOnDomain(self.x_p)
-        eq.Residual = self.portOut_p(x_p).c_2 - self.c_p(x_p)
-        eq = self.CreateEquation("portOutElyte_p_phi")
-        x_p = eq.DistributeOnDomain(self.x_p)
-        eq.Residual = self.portOut_p(x_p).phi_2 - self.phi2_p(x_p)
-        eq = self.CreateEquation("portOutEtrode_p")
-        x_p = eq.DistributeOnDomain(self.x_p)
-        eq.Residual = self.portOut_p(x_p).phi_1 - self.phi1_p(x_p)
+        # Set output port info (connecting c, phi1, phi2 in this model to each particle)
+        # negative electrode
+        for indx_n in range(N_n):
+            eq = self.CreateEquation("portOut_n_c_{}".format(indx_n))
+            eq.Residual = self.portsOut_n[indx_n].c_2() - self.c_n(indx_n)
+            eq = self.CreateEquation("portOut_n_phi2_{}".format(indx_n))
+            eq.Residual = self.portsOut_n[indx_n].phi_2() - self.phi2_n(indx_n)
+            eq = self.CreateEquation("portOut_n_phi1_{}".format(indx_n))
+            eq.Residual = self.portsOut_n[indx_n].phi_1() - self.phi1_n(indx_n)
+        # positive electrode
+        for indx_p in range(N_p):
+            eq = self.CreateEquation("portOut_p_c_{}".format(indx_p))
+            eq.Residual = self.portsOut_p[indx_p].c_2() - self.c_p(indx_p)
+            eq = self.CreateEquation("portOut_p_phi2_{}".format(indx_p))
+            eq.Residual = self.portsOut_p[indx_p].phi_2() - self.phi2_p(indx_p)
+            eq = self.CreateEquation("portOut_p_phi1_{}".format(indx_p))
+            eq.Residual = self.portsOut_p[indx_p].phi_1() - self.phi1_p(indx_p)
 
         def i_lyte(kappa, dphidx, t_p, TF, c, dcdx):
             i = -kappa * (dphidx + 2*V_thm*(1 - t_p)*TF*(1/c)*dcdx)
@@ -302,7 +302,6 @@ class ModCell(daeModel):
         eq.Residual = d(self.phi2_p(x_n), self.x_p, eCFDM)
 
         # Tie regions together: Continuity of field variables at the electrode-separator interfaces
-        N_n, N_s, N_p = self.x_n.NumberOfPoints, self.x_s.NumberOfPoints, self.x_p.NumberOfPoints
         # negative-separator
         eq = self.CreateEquation("ns_c_cont", "continuity of c at the negative-separator interface")
         eq.Residual = self.c_s(0) - self.c_n(N_n - 1)
@@ -460,9 +459,9 @@ class SimBattery(daeSimulation):
         self.m.x_p.CreateStructuredGrid(17, 0, L_p)
         # Domains in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
-            self.m.particle_n(indx_n).r.CreateStructuredGrid(20, 0, self.Rp_n)
+            self.m.particles_n[indx_n].r.CreateStructuredGrid(20, 0, self.Rp_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
-            self.m.particle_p(indx_p).r.CreateStructuredGrid(21, 0, self.Rp_p)
+            self.m.particles_p[indx_p].r.CreateStructuredGrid(21, 0, self.Rp_p)
         # Parameters in ModCell
         self.m.F.SetValue(96485.34 * A*s/mol)
         self.m.R.SetValue(8.31447 * J/(mol*K))
@@ -482,7 +481,7 @@ class SimBattery(daeSimulation):
         self.m.Vset.SetValue(1.9 * V)
         # Parameters in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
-            p = self.m.particle_n(indx_n)
+            p = self.m.particles_n[indx_n]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
             rvec[:] = np.linspace(0, Rp_n, N) * m
@@ -490,7 +489,7 @@ class SimBattery(daeSimulation):
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
         for indx_p in range(self.m.x_p.NumberOfPoints):
-            p = self.m.particle_p(indx_p)
+            p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
             rvec[:] = np.linspace(0, Rp_p, N) * m
@@ -514,11 +513,11 @@ class SimBattery(daeSimulation):
         self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
         # particles
         for indx_n in range(self.m.x_n.NumberOfPoints):
-            p = self.m.particle_n(indx_n)
+            p = self.m.particles_n[indx_n]
             for indx_r in range(1, p.r.NumberOfPoints-1):
                 p.c.SetInitialCondition(indx_r, cs0_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
-            p = self.m.particle_p(indx_p)
+            p = self.m.particles_p[indx_p]
             for indx_r in range(1, p.r.NumberOfPoints-1):
                 p.c.SetInitialCondition(indx_r, cs0_p)
 
