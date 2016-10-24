@@ -4,10 +4,6 @@ import numpy as np
 from dae.pyUnits import m, s, K, mol, J, A
 V = J/(A*s)
 
-F = 96485.34 * A*s/mol
-R = 8.31447 * J/(mol*K)
-T = 298 * K
-
 # Define some variable types
 conc_t = daeVariableType(
     name="conc_t", units=mol/(m**3), lowerBound=0,
@@ -447,3 +443,86 @@ class ModCell(daeModel):
             # Keep applied potential constant
             eq = self.CreateEquation("applied_potential")
             eq.Residual = self.V() - self.Vset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
+
+
+class SimBattery(dae.daeSimulation):
+    def __init__(self, process_info):
+        dae.daeSimulation.__init__(self)
+        # Define the model we're going to simulate
+        self.m = mod.ModCell("ModCell", process_info=process_info)
+        self.L_n = 100e-6 * m
+        self.L_s = 80e-6 * m
+        self.L_p = 100e-6 * m
+        self.Rp_n = 10e-6 * m
+        self.Rp_p = 10e-6 * m
+        self.csmax_n = 13e3 * mol/m**3
+        self.csmax_p = 5e3 * mol/m**3
+        ff0_n = 0.01
+        ff0_p = 0.99
+
+    def SetUpParametersAndDomains(self):
+        # Domains in ModCell
+        self.m.x_n.CreateStructuredGrid(15, 0, L_n)
+        self.m.x_s.CreateStructuredGrid(16, 0, L_s)
+        self.m.x_p.CreateStructuredGrid(17, 0, L_p)
+        # Domains in each particle
+        for indx_n in range(self.m.x_n.NumberOfPoints):
+            self.m.particle_n(indx_n).r.CreateStructuredGrid(20, 0, self.Rp_n)
+        for indx_p in range(self.m.x_p.NumberOfPoints):
+            self.m.particle_p(indx_p).r.CreateStructuredGrid(21, 0, self.Rp_p)
+        # Parameters in ModCell
+        self.m.F.SetValue(96485.34 * A*s/mol)
+        self.m.R.SetValue(8.31447 * J/(mol*K))
+        self.m.T.SetValue(298 * K)
+        self.m.L_n.SetValue(self.L_n)
+        self.m.L_s.SetValue(self.L_s)
+        self.m.L_p.SetValue(self.L_p)
+        self.m.BruggExp_n.SetValue(-0.5)
+        self.m.BruggExp_s.SetValue(-0.5)
+        self.m.BruggExp_p.SetValue(-0.5)
+        self.m.poros_n.SetValue(0.3)
+        self.m.poros_s.SetValue(0.4)
+        self.m.poros_p.SetValue(0.3)
+        self.m.a_n.SetValue((1-self.m.poros_n())*3/self.Rp_n)
+        self.m.a_p.SetValue((1-self.m.poros_p())*3/self.Rp_p)
+        self.m.currset.SetValue(1e-4 * A/m**3)
+        self.m.Vset.SetValue(1.9 * V)
+        # Parameters in each particle
+        for indx_n in range(self.m.x_n.NumberOfPoints):
+            p = self.m.particle_n(indx_n)
+            N = p.r.NumberOfPoints
+            rvec = np.empty(N, dtype=object)
+            rvec[:] = np.linspace(0, Rp_n, N) * m
+            p.w.SetValues(rvec**2)
+            p.j_0.SetValue(1e-4 * mol/(m**2 * s))
+            p.alpha.SetValue(0.5)
+        for indx_p in range(self.m.x_p.NumberOfPoints):
+            p = self.m.particle_p(indx_p)
+            N = p.r.NumberOfPoints
+            rvec = np.empty(N, dtype=object)
+            rvec[:] = np.linspace(0, Rp_p, N) * m
+            p.w.SetValues(rvec**2)
+            p.j_0.SetValue(1e-4 * mol/(m**2 * s))
+            p.alpha.SetValue(0.5)
+
+    def SetUpVariables(self):
+        # ModCell
+        for indx_x_n in range(1, self.m.x_n.NumberOfPoints-1):
+            self.m.c_n(indx_x_n).SetInitialCondition(indx_x_n, 1e3 * mol/m**3)
+            self.m.phi1_n(indx_x_n).SetInitialGuess(indx_x_n, U_n(ff0_n*csmax_n))
+        for indx_x_s in range(1, self.m.x_s.NumberOfPoints-1):
+            self.m.c_s(indx_x_s).SetInitialCondition(indx_x_s, 1e3 * mol/m**3)
+        for indx_x_p in range(1, self.m.x_p.NumberOfPoints-1):
+            self.m.c_p(indx_x_p).SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
+            self.m.phi1_p(indx_x_p).SetInitialGuess(indx_x_p, U_p(ff0_p*csmax_p))
+        self.m.phiCC_n.SetInitialGuess(U_n(ff0_n*csmax_n))
+        self.m.phiCC_p.SetInitialGuess(U_p(ff0_p*csmax_p))
+        # particles
+        for indx_n in range(self.m.x_n.NumberOfPoints):
+            p = self.m.particle_n(indx_n)
+            for indx_r in range(1, p.r.NumberOfPoints-1):
+                p.c.SetInitialCondition(indx_r, ff0_n*csmax_n)
+        for indx_p in range(self.m.x_p.NumberOfPoints):
+            p = self.m.particle_p(indx_p)
+            for indx_r in range(1, p.r.NumberOfPoints-1):
+                p.c.SetInitialCondition(indx_r, ff0_p*csmax_p)
