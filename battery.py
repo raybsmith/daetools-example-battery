@@ -14,47 +14,42 @@ elec_pot_t = daeVariableType(
 rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
-
+process_info = {"profileType": "CC",
+                "tend": 1 * s,
+                "tramp": 1e-3
+                }
 
 def kappa(c):
     out = 1 * S/m
     return out
 
-
 def D(c):
     out = 1e-10 * m**2/s
     return out
-
 
 def thermodynamic_factor(c):
     out = 1
     return out
 
-
 def t_p(c):
     out = 0.3
     return out
-
 
 def Ds_n(c):
     out = 1e-12 * m**2/s
     return out
 
-
 def Ds_p(c):
     out = 1e-12 * m**2/s
     return out
-
 
 def U_n(c):
     out = 0.1 * V
     return out
 
-
 def U_p(c):
     out = 2.0 * V
     return out
-
 
 class portFromMacro(daePort):
     def __int__(self, Name, PortType, Model, Description):
@@ -62,11 +57,9 @@ class portFromMacro(daePort):
         self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
         self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
 
-
 class portFromParticle(daePort):
     def __int__(self, Name, PortType, Model, Description):
         self.j_p = daeVariable("j_p", rxn_t, self, "Reaction rate at particle surface")
-
 
 class ModParticle(daeModel):
     def __init__(self, Name, Parent=None, Description="", Ds=Ds, U=U):
@@ -120,9 +113,8 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("portOut")
         eq.Residual = self.portOut.j_p() - self.j_p()
 
-
 class ModCell(daeModel):
-    def __init__(self, Name, Parent=None, Description="", process_info=None):
+    def __init__(self, Name, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
         self.process_info = process_info
 
@@ -446,10 +438,10 @@ class ModCell(daeModel):
 
 
 class SimBattery(dae.daeSimulation):
-    def __init__(self, process_info):
+    def __init__(self):
         dae.daeSimulation.__init__(self)
         # Define the model we're going to simulate
-        self.m = mod.ModCell("ModCell", process_info=process_info)
+        self.m = mod.ModCell("ModCell")
         self.L_n = 100e-6 * m
         self.L_s = 80e-6 * m
         self.L_p = 100e-6 * m
@@ -526,3 +518,55 @@ class SimBattery(dae.daeSimulation):
             p = self.m.particle_p(indx_p)
             for indx_r in range(1, p.r.NumberOfPoints-1):
                 p.c.SetInitialCondition(indx_r, ff0_p*csmax_p)
+
+# Use daeSimulator class
+def guiRun(app):
+    sim = simTutorial()
+    sim.m.SetReportingOn(True)
+    sim.ReportingInterval = 10
+    sim.TimeHorizon       = 1000
+    simulator  = daeSimulator(app, simulation=sim)
+    simulator.exec_()
+
+# Setup everything manually and run in a console
+def consoleRun():
+    # Create Log, Solver, DataReporter and Simulation object
+    log          = daePythonStdOutLog()
+    daesolver    = daeIDAS()
+    datareporter = daeTCPIPDataReporter()
+    simulation   = simTutorial()
+
+    # Enable reporting of all variables
+    simulation.m.SetReportingOn(True)
+
+    # Set the time horizon and the reporting interval
+    simulation.ReportingInterval = process_info["tend"] / 100
+    simulation.TimeHorizon = process_info["tend"]
+
+    # Connect data reporter
+    simName = simulation.m.Name + strftime(" [%d.%m.%Y %H:%M:%S]", localtime())
+    if(datareporter.Connect("", simName) == False):
+        sys.exit()
+
+    # Initialize the simulation
+    simulation.Initialize(daesolver, datareporter, log)
+
+    # Save the model report and the runtime model report
+    simulation.m.SaveModelReport(simulation.m.Name + ".xml")
+    simulation.m.SaveRuntimeModelReport(simulation.m.Name + "-rt.xml")
+
+    # Solve at time=0 (initialization)
+    simulation.SolveInitial()
+
+    # Run
+    simulation.Run()
+
+    simulation.Finalize()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and (sys.argv[1] == 'console'):
+        consoleRun()
+    else:
+        from PyQt4 import QtCore, QtGui
+        app = QtGui.QApplication(sys.argv)
+        guiRun(app)
