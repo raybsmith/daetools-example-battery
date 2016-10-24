@@ -2,11 +2,12 @@
 # W503 line break before binary operator
 # E226 missing whitespace around arithmetic operator
 # E123 closing bracket does not match indentation of opening bracket’s line
+# E221 multiple spaces before operator
 # E231 missing whitespace after ',', ';', or ':' (should only be ignored for array indexing)
 # E302 expected 2 blank lines, found 1
 # E402 module level import not at top of file
 # F403 unable to detect undefined names
 # F405 undefined or from star imports
-ignore = W503,E226,E123,E231,E302,F403,F405
+ignore = W503,E226,E123,E221,E231,E302,F403,F405
 exclude = mpetLogTimeSpace.py,mpetMaterialsMHC.py,mod_cell_M.py
 max-line-length = 119
