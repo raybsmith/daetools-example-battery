@@ -1,7 +1,7 @@
 from daetools.pyDAE import *
 import numpy as np
 
-from dae.pyUnits import m, s, K, mol, J, A
+from pyUnits import m, s, K, mol, J, A
 V = J/(A*s)
 
 # Define some variable types
@@ -52,17 +52,19 @@ def U_p(c):
     return out
 
 class portFromMacro(daePort):
-    def __int__(self, Name, PortType, Model, Description):
+    def __init__(self, Name, PortType, Model, Description=""):
+        daePort.__init__(self, Name, PortType, Model, Description)
         self.c_2 = daeVariable("c_2", conc_t, self, "Concentration in electrolyte")
         self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
         self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
 
 class portFromParticle(daePort):
-    def __int__(self, Name, PortType, Model, Description):
+    def __init__(self, Name, PortType, Model, Description=""):
+        daePort.__init__(self, Name, PortType, Model, Description)
         self.j_p = daeVariable("j_p", rxn_t, self, "Reaction rate at particle surface")
 
 class ModParticle(daeModel):
-    def __init__(self, Name, Parent=None, Description="", Ds=Ds, U=U):
+    def __init__(self, Name, Parent=None, Description="", Ds=None, U=None):
         daeModel.__init__(self, Name, Parent, Description)
 
         # Domain where variables are distributed
@@ -80,13 +82,11 @@ class ModParticle(daeModel):
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
 
         # Ports
-        self.portIn_2 = portFromElyte("portInLyte", eInletPort, self, "inlet port from elyte")
-        self.portIn_1 = portFromEtrode("portInEtrode", eInletPort, self, "inet port from e- conducting phase")
+        self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
         self.portOut = portFromParticle("portOut", eOutletPort, self, "outlet to elyte")
-        self.phi_2 = self.portInLyte.phi_2
-        self.c_2 = self.portInLyte.c_2
-        self.phi_1 = self.portInBulk.phi_1
-        self.mu_2 = self.phi_2
+        self.phi_2 = self.portIn.phi_2
+        self.c_2 = self.portIn.c_2
+        self.phi_1 = self.portIn.phi_1
 
     def DeclareEquations(self):
         dae.daeModel.DeclareEquations(self)
@@ -131,12 +131,12 @@ class ModCell(daeModel):
 
         # Ports
         # negative electrode
-        self.portOut_n = portFromEtrode("portOutMacro_n", eOutletPort, self, "Port to particles")
+        self.portOut_n = portFromMacro("portOutMacro_n", eOutletPort, self, "Port to particles")
         self.portOut_n.DistributeOnDomain(self.x_n)
         self.portIn_n = portFromParticle("portIn_n", eInletPort, self, "Port from particles")
         self.portIn_n.DistributeOnDomain(self.x_n)
         # positive electrode
-        self.portOut_p = portFromEtrode("portOutMacro_p", eOutletPort, self, "Port to particles")
+        self.portOut_p = portFromMacro("portOutMacro_p", eOutletPort, self, "Port to particles")
         self.portOut_p.DistributeOnDomain(self.x_p)
         self.portIn_p = portFromParticle("portIn_p", eInletPort, self, "Port from particles")
         self.portIn_p.DistributeOnDomain(self.x_p)
@@ -146,12 +146,10 @@ class ModCell(daeModel):
         # There should be one port defined for each "particle" sub-model, one of which exists at each grid point within
         # the electrodes, and each of these ports should be connected to the corresponding port in the particle model.
         # negative electrode
-        self.ConnectPorts(self.PortOutElyte_n, self.particle_n.portIn_2)
-        self.ConnectPorts(self.PortOutEtrode_n, self.particle_n.portIn_1)
+        self.ConnectPorts(self.PortOut_n, self.particle_n.portIn)
         self.ConnectPorts(self.PortIn_n, self.particle_n.portOut)
         # positive electrode
-        self.ConnectPorts(self.PortOutElyte_p, self.particle_p.portIn_2)
-        self.ConnectPorts(self.PortOutEtrode_p, self.particle_p.portIn_1)
+        self.ConnectPorts(self.PortOut_p, self.particle_p.portIn)
         self.ConnectPorts(self.PortIn_p, self.particle_p.portOut)
 
         # Variables
@@ -437,11 +435,11 @@ class ModCell(daeModel):
             eq.Residual = self.V() - self.Vset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
 
 
-class SimBattery(dae.daeSimulation):
+class SimBattery(daeSimulation):
     def __init__(self):
-        dae.daeSimulation.__init__(self)
+        daeSimulation.__init__(self)
         # Define the model we're going to simulate
-        self.m = mod.ModCell("ModCell")
+        self.m = ModCell("ModCell")
         self.L_n = 100e-6 * m
         self.L_s = 80e-6 * m
         self.L_p = 100e-6 * m
@@ -449,8 +447,8 @@ class SimBattery(dae.daeSimulation):
         self.Rp_p = 10e-6 * m
         self.csmax_n = 13e3 * mol/m**3
         self.csmax_p = 5e3 * mol/m**3
-        ff0_n = 0.01
-        ff0_p = 0.99
+        self.ff0_n = 0.01
+        self.ff0_p = 0.99
 
     def SetUpParametersAndDomains(self):
         # Domains in ModCell
@@ -498,30 +496,32 @@ class SimBattery(dae.daeSimulation):
             p.alpha.SetValue(0.5)
 
     def SetUpVariables(self):
+        cs0_n = self.ff0_n * self.csmax_n
+        cs0_p = self.ff0_p * self.csmax_p
         # ModCell
         for indx_x_n in range(1, self.m.x_n.NumberOfPoints-1):
             self.m.c_n(indx_x_n).SetInitialCondition(indx_x_n, 1e3 * mol/m**3)
-            self.m.phi1_n(indx_x_n).SetInitialGuess(indx_x_n, U_n(ff0_n*csmax_n))
+            self.m.phi1_n(indx_x_n).SetInitialGuess(indx_x_n, U_n(cs0_n))
         for indx_x_s in range(1, self.m.x_s.NumberOfPoints-1):
             self.m.c_s(indx_x_s).SetInitialCondition(indx_x_s, 1e3 * mol/m**3)
         for indx_x_p in range(1, self.m.x_p.NumberOfPoints-1):
             self.m.c_p(indx_x_p).SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
-            self.m.phi1_p(indx_x_p).SetInitialGuess(indx_x_p, U_p(ff0_p*csmax_p))
-        self.m.phiCC_n.SetInitialGuess(U_n(ff0_n*csmax_n))
-        self.m.phiCC_p.SetInitialGuess(U_p(ff0_p*csmax_p))
+            self.m.phi1_p(indx_x_p).SetInitialGuess(indx_x_p, U_p(cs0_p))
+        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n))
+        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
         # particles
         for indx_n in range(self.m.x_n.NumberOfPoints):
             p = self.m.particle_n(indx_n)
             for indx_r in range(1, p.r.NumberOfPoints-1):
-                p.c.SetInitialCondition(indx_r, ff0_n*csmax_n)
+                p.c.SetInitialCondition(indx_r, cs0_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particle_p(indx_p)
             for indx_r in range(1, p.r.NumberOfPoints-1):
-                p.c.SetInitialCondition(indx_r, ff0_p*csmax_p)
+                p.c.SetInitialCondition(indx_r, cs0_p)
 
 # Use daeSimulator class
 def guiRun(app):
-    sim = simTutorial()
+    sim = SimBattery()
     sim.m.SetReportingOn(True)
     sim.ReportingInterval = 10
     sim.TimeHorizon       = 1000
@@ -534,7 +534,7 @@ def consoleRun():
     log          = daePythonStdOutLog()
     daesolver    = daeIDAS()
     datareporter = daeTCPIPDataReporter()
-    simulation   = simTutorial()
+    simulation   = SimBattery()
 
     # Enable reporting of all variables
     simulation.m.SetReportingOn(True)
@@ -545,7 +545,7 @@ def consoleRun():
 
     # Connect data reporter
     simName = simulation.m.Name + strftime(" [%d.%m.%Y %H:%M:%S]", localtime())
-    if(datareporter.Connect("", simName) == False):
+    if(datareporter.Connect("", simName) is False):
         sys.exit()
 
     # Initialize the simulation
@@ -567,6 +567,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and (sys.argv[1] == 'console'):
         consoleRun()
     else:
-        from PyQt4 import QtCore, QtGui
+        from PyQt4 import QtGui
         app = QtGui.QApplication(sys.argv)
         guiRun(app)
