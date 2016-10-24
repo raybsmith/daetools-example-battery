@@ -331,9 +331,9 @@ class ModCell(daeModel):
             c = 1/(h_right*dfac)
             df = a*f_left + b*f_cent + c*f_right
             return df
-        h_n = pinfo["L_n"] / N_n
-        h_s = pinfo["L_s"] / N_s
-        h_p = pinfo["L_p"] / N_p
+        h_n = self.L_n() / (N_n - 1)
+        h_s = self.L_s() / (N_s - 1)
+        h_p = self.L_p() / (N_p - 1)
         # negative-separator
         eff_factor_left = self.poros_n() / (self.poros_n()**self.BruggExp_n())
         eff_factor_cent = eff_factor_left
