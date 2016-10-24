@@ -11,6 +11,9 @@ conc_t = daeVariableType(
 elec_pot_t = daeVariableType(
     name="elec_pot_t", units=V, lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
+current_t = daeVariableType(
+    name="current_t", units=A/m**3, lowerBound=-1e20,
+    upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
@@ -173,25 +176,25 @@ class ModCell(daeModel):
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
-        self.current = dae.daeVariable("current", dae.no_t, self, "Total current of the cell")
+        self.current = daeVariable("current", current_t, self, "Total current of the cell")
 
         # Parameters
         self.F = daeParameter("F", A*s/mol, self, "Faraday's constant")
         self.R = daeParameter("R", J/(mol*K), self, "Gas constant")
         self.T = daeParameter("T", K, self, "Temperature")
-        self.a_n = daeParameter("a_n", 1/m, "Reacting area per electrode volume, negative electrode")
-        self.a_p = daeParameter("a_p", 1/m, "Reacting area per electrode volume, positive electrode")
-        self.L_n = daeParameter("L_n", m, "Length of negative electrode")
-        self.L_s = daeParameter("L_s", m, "Length of separator")
-        self.L_p = daeParameter("L_p", m, "Length of positive electrode")
-        self.BruggExp_n = daeParameter("BruggExp_n", unit(), "Bruggeman exponent in x_n")
-        self.BruggExp_s = daeParameter("BruggExp_s", unit(), "Bruggeman exponent in x_s")
-        self.BruggExp_p = daeParameter("BruggExp_p", unit(), "Bruggeman exponent in x_p")
-        self.poros_n = daeParameter("poros_n", unit(), "porosity in x_n")
-        self.poros_s = daeParameter("poros_s", unit(), "porosity in x_s")
-        self.poros_p = daeParameter("poros_p", unit(), "porosity in x_p")
-        self.currset = daeParameter("currset", A/m**3, "current per volume of active material")
-        self.Vset = daeParameter("Vset", V, "applied voltage set point")
+        self.a_n = daeParameter("a_n", m**(-1), self, "Reacting area per electrode volume, negative electrode")
+        self.a_p = daeParameter("a_p", m**(-1), self, "Reacting area per electrode volume, positive electrode")
+        self.L_n = daeParameter("L_n", m, self, "Length of negative electrode")
+        self.L_s = daeParameter("L_s", m, self, "Length of separator")
+        self.L_p = daeParameter("L_p", m, self, "Length of positive electrode")
+        self.BruggExp_n = daeParameter("BruggExp_n", unit(), self, "Bruggeman exponent in x_n")
+        self.BruggExp_s = daeParameter("BruggExp_s", unit(), self, "Bruggeman exponent in x_s")
+        self.BruggExp_p = daeParameter("BruggExp_p", unit(), self, "Bruggeman exponent in x_p")
+        self.poros_n = daeParameter("poros_n", unit(), self, "porosity in x_n")
+        self.poros_s = daeParameter("poros_s", unit(), self, "porosity in x_s")
+        self.poros_p = daeParameter("poros_p", unit(), self, "porosity in x_p")
+        self.currset = daeParameter("currset", A/m**3, self, "current per volume of active material")
+        self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
 
     def DeclareEquations(self):
         dae.daeModel.DeclareEquations(self)
@@ -540,8 +543,8 @@ def consoleRun():
     simulation.m.SetReportingOn(True)
 
     # Set the time horizon and the reporting interval
-    simulation.ReportingInterval = process_info["tend"] / 100
-    simulation.TimeHorizon = process_info["tend"]
+    simulation.ReportingInterval = process_info["tend"].value / 100
+    simulation.TimeHorizon = process_info["tend"].value
 
     # Connect data reporter
     simName = simulation.m.Name + strftime(" [%d.%m.%Y %H:%M:%S]", localtime())
