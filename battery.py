@@ -85,6 +85,7 @@ class ModParticle(daeModel):
         self.w.DistributeOnDomain(self.r)
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
+        self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
 
         # Ports
         self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
@@ -99,7 +100,7 @@ class ModParticle(daeModel):
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
         w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.Ds(c)*d(c, self.r, eCFDM), self.r, eCFDM)
+        eq.Residual = dt(c) - 1/w*d(w * self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
         r = eq.DistributeOnDomain(self.r, eLowerBound)
@@ -500,6 +501,7 @@ class SimBattery(daeSimulation):
             p.w.SetValues(rvec**2)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
+            p.c_ref.SetValue(self.csmax_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
@@ -508,6 +510,7 @@ class SimBattery(daeSimulation):
             p.w.SetValues(rvec**2)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
+            p.c_ref.SetValue(self.csmax_p)
 
     def SetUpVariables(self):
         cs0_n = self.ff0_n * self.csmax_n
