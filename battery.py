@@ -12,8 +12,8 @@ conc_t = daeVariableType(
 elec_pot_t = daeVariableType(
     name="elec_pot_t", units=V, lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
-current_t = daeVariableType(
-    name="current_t", units=A/m**3, lowerBound=-1e20,
+current_dens_t = daeVariableType(
+    name="current_dens_t", units=A/m**2, lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
@@ -199,7 +199,7 @@ class ModCell(daeModel):
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
-        self.current = daeVariable("current", current_t, self, "Total current of the cell")
+        self.current = daeVariable("current", current_dens_t, self, "Total current of the cell")
 
         # Parameters
         self.F = daeParameter("F", A*s/mol, self, "Faraday's constant")
@@ -219,7 +219,7 @@ class ModCell(daeModel):
         self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity")
         self.cond_ref = daeParameter("cond_ref", S/m, self, "Reference units for conductivity")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Reference electrolyte concentration")
-        self.currset = daeParameter("currset", A/m**3, self, "current per volume of active material")
+        self.currset = daeParameter("currset", A/m**2, self, "current per electrode area")
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
 
     def DeclareEquations(self):
@@ -372,8 +372,7 @@ class ModCell(daeModel):
 
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
-        eq.Residual = self.current()
-        # TODO: Substract integral of F*a_p*j_p
+        eq.Residual = self.current() + np.sum(self.F()*a[:N_n]*j_p[:N_n]*h[:N_n])
 
         # Define the measured voltage
         eq = self.CreateEquation("Voltage")
@@ -442,7 +441,7 @@ class SimBattery(daeSimulation):
         self.m.D_ref.SetValue(1 * m**2/s)
         self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
-        self.m.currset.SetValue(1e-4 * A/m**3)
+        self.m.currset.SetValue(1e-4 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
         # Parameters in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
