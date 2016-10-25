@@ -357,11 +357,11 @@ class ModCell(daeModel):
         d2phi1_p = dfdx_vec(dphi1_p, h_p*np.ones(N_p-1))
         # We assume infinite conductivity in the electron conducting phase for simplicity
         # negative
-        for indx in range(N_n):
+        for indx in range(1, N_n-1):
             eq = self.CreateEquation("phi1_n_{}".format(indx))
             eq.Residual = d2phi1_n[indx]
         # positive
-        for indx in range(N_p):
+        for indx in range(1, N_p-1):
             eq = self.CreateEquation("phi1_p_{}".format(indx))
             eq.Residual = d2phi1_p[indx]
 
@@ -383,7 +383,7 @@ class ModCell(daeModel):
 
         # Define the measured voltage
         eq = self.CreateEquation("Voltage")
-        eq.Residual = self.phiCC_p() - self.phiCC_n()
+        eq.Residual = self.V() - (self.phiCC_p() - self.phiCC_n())
 
         if pinfo["profileType"] == "CC":
             # Total Current Constraint Equation
@@ -394,7 +394,6 @@ class ModCell(daeModel):
             eq = self.CreateEquation("applied_potential")
             eq.Residual = self.V() - self.Vset()*(1 - np.exp(-Time()/self.tau_ramp()))
 
-
 class SimBattery(daeSimulation):
     def __init__(self):
         daeSimulation.__init__(self)
@@ -402,11 +401,11 @@ class SimBattery(daeSimulation):
         self.L_n = 100e-6 * m
         self.L_s = 80e-6 * m
         self.L_p = 100e-6 * m
-        self.N_n = 16
-        self.N_s = 17
-        self.N_p = 18
-        self.NR_n = 21
-        self.NR_p = 22
+        self.N_n = 3
+        self.N_s = 3
+        self.N_p = 3
+        self.NR_n = 3
+        self.NR_p = 3
         self.Rp_n = 10e-6 * m
         self.Rp_p = 10e-6 * m
         self.csmax_n = 13e3 * mol/m**3
