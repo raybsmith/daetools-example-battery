@@ -124,7 +124,6 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
         eta = self.phi_1() - self.phi_2() - self.U_ref()*self.U(c_surf/self.c_ref())
-#        eta_ndim = eta * self.F() / (self.R() * self.T())
         eta_ndim = eta / self.V_thermal()
         eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
 
@@ -321,7 +320,8 @@ class ModCell(daeModel):
         # Arbitrary datum for electric potential.
         # We apply this in the electrolyte at an arbitrary location, the negative current collector
         eq = self.CreateEquation("phi2_datum")
-        eq.Residual = phi2[0]
+#        eq.Residual = phi2[0]
+        eq.Residual = self.phiCC_n()
 
         # Tie regions together: Continuity of field variables at the electrode-separator interfaces
         # negative-separator
@@ -338,31 +338,14 @@ class ModCell(daeModel):
         # Electrode: charge conservation
         phi1_n = np.array([self.phi1_n(indx) for indx in range(N_n)])
         phi1_p = np.array([self.phi1_p(indx) for indx in range(N_p)])
-        dphi1_n = dfdx_vec(phi1_n, h_n*np.ones(N_n-1))
-        d2phi1_n = dfdx_vec(dphi1_n, h_n*np.ones(N_n-1))
-        dphi1_p = dfdx_vec(phi1_p, h_p*np.ones(N_p-1))
-        d2phi1_p = dfdx_vec(dphi1_p, h_p*np.ones(N_p-1))
         # We assume infinite conductivity in the electron conducting phase for simplicity
         # negative
-        for indx in range(1, N_n-1):
+        for indx in range(N_n):
             eq = self.CreateEquation("phi1_n_{}".format(indx))
-            eq.Residual = d2phi1_n[indx]
-        # positive
-        for indx in range(1, N_p-1):
+            eq.Residual = phi1_n[indx] - self.phiCC_n()
+        for indx in range(N_p):
             eq = self.CreateEquation("phi1_p_{}".format(indx))
-            eq.Residual = d2phi1_p[indx]
-
-        # Electrode boundary conditions
-        # at the electrode-separator interfaces, dphi/dx = 0
-        eq = self.CreateEquation("phi1_n_right")
-        eq.Residual = dphi1_n[-1]
-        eq = self.CreateEquation("phi1_n_left")
-        eq.Residual = dphi1_p[0]
-        # at the current collectors, phi = that of the current collector
-        eq = self.CreateEquation("phi1_n_left")
-        eq.Residual = phi1_n[0] - self.phiCC_n()
-        eq = self.CreateEquation("phi1_p_right")
-        eq.Residual = phi1_p[-1] - self.phiCC_p()
+            eq.Residual = phi1_p[indx] - self.phiCC_p()
 
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
