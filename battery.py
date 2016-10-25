@@ -330,11 +330,16 @@ class ModCell(daeModel):
         eq.Residual = dc[0]
         eq = self.CreateEquation("BC_c_CC_p", "BC for c at the positive current collector")
         eq.Residual = dc[-1]
-        # phi -- no slope at one; arbitrary datum at the other
+        # phi -- no slope at one at either current collector
         eq = self.CreateEquation("BC_phi_CC_n", "BC for phi at the negative current collector")
-        eq.Residual = phi2[0]
+        eq.Residual = dphi2[0]
         eq = self.CreateEquation("BC_phi_CC_p", "BC for phi at the positive current collector")
         eq.Residual = dphi2[-1]
+
+        # Arbitrary datum for electric potential.
+        # We apply this in the electrolyte at an arbitrary location, the negative current collector
+        eq = self.CreateEquation("phi2_datum")
+        eq.Residual = phi2[0]
 
         # Tie regions together: Continuity of field variables at the electrode-separator interfaces
         # negative-separator
@@ -481,15 +486,15 @@ class SimBattery(daeSimulation):
         cs0_n = self.ff0_n * self.csmax_n
         cs0_p = self.ff0_p * self.csmax_p
         # ModCell
-        for indx_x_n in range(1, self.m.x_n.NumberOfPoints-1):
+        for indx_x_n in range(1, self.m.x_n.NumberOfPoints):
             self.m.c_n.SetInitialCondition(indx_x_n, 1e3 * mol/m**3)
-            self.m.phi1_n.SetInitialGuess(indx_x_n, U_n(cs0_n))
         for indx_x_s in range(1, self.m.x_s.NumberOfPoints-1):
             self.m.c_s.SetInitialCondition(indx_x_s, 1e3 * mol/m**3)
-        for indx_x_p in range(1, self.m.x_p.NumberOfPoints-1):
+        for indx_x_p in range(0, self.m.x_p.NumberOfPoints-1):
             self.m.c_p.SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
-            self.m.phi1_p.SetInitialGuess(indx_x_p, U_p(cs0_p))
+        self.m.phi1_n.SetInitialGuesses(U_n(cs0_n) * V)
         self.m.phiCC_n.SetInitialGuess(U_n(cs0_n))
+        self.m.phi1_p.SetInitialGuesses(U_p(cs0_p) * V)
         self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
         # particles
         for indx_n in range(self.m.x_n.NumberOfPoints):
