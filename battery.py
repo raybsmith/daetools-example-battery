@@ -153,10 +153,10 @@ class ModCell(daeModel):
         N_p = self.process_info["N_p"]
         self.particles_n = np.empty(N_n, dtype=object)
         self.particles_p = np.empty(N_p, dtype=object)
-        for indx_n in range(N_n):
-            self.particles_n[indx_n] = ModParticle("particle_n_{}".format(indx_n), self, Ds=Ds_n, U=U_n)
-        for indx_p in range(N_p):
-            self.particles_p[indx_p] = ModParticle("particle_p_{}".format(indx_p), self, Ds=Ds_p, U=U_p)
+        for indx in range(N_n):
+            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), self, Ds=Ds_n, U=U_n)
+        for indx in range(N_p):
+            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), self, Ds=Ds_p, U=U_p)
 
         # Ports
         self.portsOut_n = np.empty(N_n, dtype=object)
@@ -164,21 +164,21 @@ class ModCell(daeModel):
         self.portsOut_p = np.empty(N_p, dtype=object)
         self.portsIn_p = np.empty(N_p, dtype=object)
         # negative electrode
-        for indx_n in range(N_n):
-            self.portsOut_n[indx_n] = portFromMacro("portOut_n_{}".format(indx_n), eOutletPort, self, "To particle")
-            self.portsIn_n[indx_n] = portFromParticle("portIn_n_{}".format(indx_n), eOutletPort, self, "From particle")
+        for indx in range(N_n):
+            self.portsOut_n[indx] = portFromMacro("portOut_n_{}".format(indx), eOutletPort, self, "To particle")
+            self.portsIn_n[indx] = portFromParticle("portIn_n_{}".format(indx), eOutletPort, self, "From particle")
         # positive electrode
-        for indx_p in range(N_p):
-            self.portsOut_p[indx_p] = portFromMacro("portOut_p_{}".format(indx_p), eOutletPort, self, "To particle")
-            self.portsIn_p[indx_p] = portFromParticle("portIn_p_{}".format(indx_p), eOutletPort, self, "From particle")
+        for indx in range(N_p):
+            self.portsOut_p[indx] = portFromMacro("portOut_p_{}".format(indx), eOutletPort, self, "To particle")
+            self.portsIn_p[indx] = portFromParticle("portIn_p_{}".format(indx), eOutletPort, self, "From particle")
 
         # Connect ports
-        for indx_n in range(N_n):
-            self.ConnectPorts(self.portsOut_n[indx_n], self.particles_n[indx_n].portIn)
-            self.ConnectPorts(self.portsIn_n[indx_n], self.particles_n[indx_n].portOut)
-        for indx_p in range(N_p):
-            self.ConnectPorts(self.portsOut_p[indx_p], self.particles_p[indx_p].portIn)
-            self.ConnectPorts(self.portsIn_p[indx_p], self.particles_p[indx_p].portOut)
+        for indx in range(N_n):
+            self.ConnectPorts(self.portsOut_n[indx], self.particles_n[indx].portIn)
+            self.ConnectPorts(self.portsIn_n[indx], self.particles_n[indx].portOut)
+        for indx in range(N_p):
+            self.ConnectPorts(self.portsOut_p[indx], self.particles_p[indx].portIn)
+            self.ConnectPorts(self.portsIn_p[indx], self.particles_p[indx].portOut)
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -287,21 +287,21 @@ class ModCell(daeModel):
 
         # Set output port info (connecting c, phi1, phi2 in this model to each particle)
         # negative electrode
-        for indx_n in range(N_n):
-            eq = self.CreateEquation("portOut_n_c_{}".format(indx_n))
-            eq.Residual = self.portsOut_n[indx_n].c_2() - self.c_n(indx_n)
-            eq = self.CreateEquation("portOut_n_phi2_{}".format(indx_n))
-            eq.Residual = self.portsOut_n[indx_n].phi_2() - self.phi2_n(indx_n)
-            eq = self.CreateEquation("portOut_n_phi1_{}".format(indx_n))
-            eq.Residual = self.portsOut_n[indx_n].phi_1() - self.phi1_n(indx_n)
+        for indx in range(N_n):
+            eq = self.CreateEquation("portOut_n_c_{}".format(indx))
+            eq.Residual = self.portsOut_n[indx].c_2() - self.c_n(indx)
+            eq = self.CreateEquation("portOut_n_phi2_{}".format(indx))
+            eq.Residual = self.portsOut_n[indx].phi_2() - self.phi2_n(indx)
+            eq = self.CreateEquation("portOut_n_phi1_{}".format(indx))
+            eq.Residual = self.portsOut_n[indx].phi_1() - self.phi1_n(indx)
         # positive electrode
-        for indx_p in range(N_p):
-            eq = self.CreateEquation("portOut_p_c_{}".format(indx_p))
-            eq.Residual = self.portsOut_p[indx_p].c_2() - self.c_p(indx_p)
-            eq = self.CreateEquation("portOut_p_phi2_{}".format(indx_p))
-            eq.Residual = self.portsOut_p[indx_p].phi_2() - self.phi2_p(indx_p)
-            eq = self.CreateEquation("portOut_p_phi1_{}".format(indx_p))
-            eq.Residual = self.portsOut_p[indx_p].phi_1() - self.phi1_p(indx_p)
+        for indx in range(N_p):
+            eq = self.CreateEquation("portOut_p_c_{}".format(indx))
+            eq.Residual = self.portsOut_p[indx].c_2() - self.c_p(indx)
+            eq = self.CreateEquation("portOut_p_phi2_{}".format(indx))
+            eq.Residual = self.portsOut_p[indx].phi_2() - self.phi2_p(indx)
+            eq = self.CreateEquation("portOut_p_phi1_{}".format(indx))
+            eq.Residual = self.portsOut_p[indx].phi_1() - self.phi1_p(indx)
 
         # Electrolyte: mass and charge conservation
         dc = dfdx_vec(c, h)
@@ -538,9 +538,9 @@ def consoleRun():
     # Initialize the simulation
     simulation.Initialize(daesolver, datareporter, log)
 
-    # Save the model report and the runtime model report
-    simulation.m.SaveModelReport(simulation.m.Name + ".xml")
-    simulation.m.SaveRuntimeModelReport(simulation.m.Name + "-rt.xml")
+#    # Save the model report and the runtime model report
+#    simulation.m.SaveModelReport(simulation.m.Name + ".xml")
+#    simulation.m.SaveRuntimeModelReport(simulation.m.Name + "-rt.xml")
 
     # Solve at time=0 (initialization)
     simulation.SolveInitial()
