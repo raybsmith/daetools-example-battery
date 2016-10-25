@@ -166,11 +166,11 @@ class ModCell(daeModel):
         # negative electrode
         for indx in range(N_n):
             self.portsOut_n[indx] = portFromMacro("portOut_n_{}".format(indx), eOutletPort, self, "To particle")
-            self.portsIn_n[indx] = portFromParticle("portIn_n_{}".format(indx), eOutletPort, self, "From particle")
+            self.portsIn_n[indx] = portFromParticle("portIn_n_{}".format(indx), eInletPort, self, "From particle")
         # positive electrode
         for indx in range(N_p):
             self.portsOut_p[indx] = portFromMacro("portOut_p_{}".format(indx), eOutletPort, self, "To particle")
-            self.portsIn_p[indx] = portFromParticle("portIn_p_{}".format(indx), eOutletPort, self, "From particle")
+            self.portsIn_p[indx] = portFromParticle("portIn_p_{}".format(indx), eInletPort, self, "From particle")
 
         # Connect ports
         for indx in range(N_n):
