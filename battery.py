@@ -227,6 +227,58 @@ class ModCell(daeModel):
         pinfo = self.process_info
         V_thm = self.R() * self.T() / self.F()
         N_n, N_s, N_p = self.x_n.NumberOfPoints, self.x_s.NumberOfPoints, self.x_p.NumberOfPoints
+        # Generally, we cannot easily use the built-in FDM because we need to couple the equations
+        # in the cell domain with those in the particles. Thus, we need grid spacing info and
+        # finite difference approximation formulas.
+        h_n = self.L_n() / (N_n - 1)
+        h_s = self.L_s() / (N_s - 1)
+        h_p = self.L_p() / (N_p - 1)
+        # We'll combine the separate electrolyte domains into single numpy arrays for convenience
+        c = np.array([self.c_n(indx) for indx in range(N_n)]
+                     + [self.c_s(indx) for indx in range(1, N_s-1)]
+                     + [self.c_p(indx) for indx in range(N_p)])
+        dcdt = np.array([self.c_n.dt(indx) for indx in range(N_n)]
+                        + [self.c_s.dt(indx) for indx in range(1, N_s-1)]
+                        + [self.c_p.dt(indx) for indx in range(N_p)])
+        phi2 = np.array([self.phi2_n(indx) for indx in range(N_n)]
+                        + [self.phi2_s(indx) for indx in range(1, N_s-1)]
+                        + [self.phi2_p(indx) for indx in range(N_p)])
+        h = np.hstack((h_n*np.ones(N_n-1), h_s*np.ones(N_s-1), h_p*np.ones(N_p-1)))
+        a = np.hstack((self.a_n()*np.ones(N_n), np.zeros(N_s-2), self.a_p()*np.ones(N_p)))
+        j_p = np.array([self.portsIn_n[indx].j_p() for indx in range(N_n)]
+                       + (N_s-2)*[0]
+                       + [self.portsIn_p[indx].j_p() for indx in range(N_p)])
+        eff_factor = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n),
+                                self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
+                                self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p)))
+
+        # Non-uniform finite difference approximations
+        def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
+            dfac = 1 + h_right/h_left
+            a = -h_right/(h_left**2*dfac)
+            b = (h_right/h_left**2 - 1/h_right)/dfac
+            c = 1/(h_right*dfac)
+            df = a*f_left + b*f_cent + c*f_right
+            return df
+
+        def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
+            b = (h1+h2)/(h1*h2)
+            c = -h1/(h2*(h1+h2))
+            a = -(b+c)
+            if side == "forward":
+                pass
+            elif side == "backward":
+                a *= -1
+                b *= -1
+                c *= -1
+            df = a*f_cent + b*f_side1 + c*f_side2
+            return df
+
+        def dfdx_vec(fvec, hvec):
+            df = np.array([dfdx_direction(fvec[0], fvec[1], fvec[2], h[0], h[1], "forward")]
+                          + [dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:])]
+                          + [dfdx_direction(fvec[-1], fvec[-2], fvec[-3], h[-1], h[-2], "backward")])
+            return df
 
         # Set output port info (connecting c, phi1, phi2 in this model to each particle)
         # negative electrode
@@ -246,83 +298,36 @@ class ModCell(daeModel):
             eq = self.CreateEquation("portOut_p_phi1_{}".format(indx_p))
             eq.Residual = self.portsOut_p[indx_p].phi_1() - self.phi1_p(indx_p)
 
-        def i_lyte(kappa, dphidx, t_p, TF, c, dcdx):
-            i = -kappa * (dphidx + 2*V_thm*(1 - t_p)*TF*(1/c)*dcdx)
-            return i
+        # Electrolyte: mass and charge conservation
+        dc = dfdx_vec(c, h)
+        dphi2 = dfdx_vec(phi2, h)
+        trans_m = 1 - t_p(c)
+        dtrans_m = dfdx_vec(1 - t_p(c), h)
+        kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
+        D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
+        i = -kappa_eff * (dphi2 + 2*V_thm*(1 - t_p)*TF*(1/c)*dcdx)
+        di = dfdx_vec(i, h)
+        mass_term_d = dfdx_vec(D_eff*dc, h)
+        mass_term_i = (trans_m*di + i*dtrans_m)/self.F()
+        for indx in range(1, len(c)-1):
+            # mass
+            eq = self.CreateEquation("massCons_n_{}".format(indx))
+            eq.Residual = dcdt[indx] - (mass_term_d[indx] + mass_term_i[indx])
+            # charge
+            eq = self.CreateEquation("chargeCons_n_{}".format(indx))
+            eq.Residual = di[indx] - a[indx]*j_p[indx]
 
-        def set_up_cons_eq(name, domain, cvar, phivar, poros, BruggExp):
-            eq = self.CreateEquation(name)
-            x = eq.DistributeOnDomain(domain, eOpenOpen)
-            c = cvar(x)
-            phi = phivar(x)
-            eff_factor = poros / (poros**BruggExp)
-            kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
-            D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
-            dcdx = d(c, domain, eCFDM)
-            dphidx = d(phi, domain, eCFDM)
-            return eq, c, phi, dcdx, dphidx, kappa_eff, D_eff
-
-        # Electrolyte: mass and charge conservation in separator
-        # mass
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_s", self.x_s, self.c_s, self.phi2_s, self.poros_s(), self.BruggExp_s())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        t_m = 1 - t_p(c)
-        dt_mdx = d(t_m, self.x_s, eCFDM)
-        didx = d(i, self.x_s, eCFDM)
-        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
-        # charge
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_s", self.x_s, self.c_s, self.phi2_s, self.poros_s(), self.BruggExp_s())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        eq.Residual = d(i, self.x_s, eCFDM)
-
-        # Electrolyte: mass and charge conservation in negative electrode
-        # mass
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_n", self.x_n, self.c_n, self.phi2_n, self.poros_n(), self.BruggExp_n())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        t_m = 1 - t_p(c)
-        dt_mdx = d(t_m, self.x_s, eCFDM)
-        didx = d(i, self.x_s, eCFDM)
-        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
-        # charge
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_n", self.x_n, self.c_n, self.phi2_n, self.poros_n(), self.BruggExp_n())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        # Note: How do we properly manage distributed ports in the equation?
-        eq.Residual = d(i, self.x_n, eCFDM) - self.a_n()*self.portIn_n(self.x_n).j_p
-
-        # Electrolyte: mass and charge conservation in positive electrode
-        # mass
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "massCons_p", self.x_p, self.c_p, self.phi2_p, self.poros_p(), self.BruggExp_p())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        t_m = 1 - t_p(c)
-        dt_mdx = d(t_m, self.x_s, eCFDM)
-        didx = d(i, self.x_s, eCFDM)
-        eq.Residual = dt(c) - (d(D_eff*dcdx) + (t_m*didx + i*dt_mdx)/self.F())
-        # charge
-        eq, c, phi, dcdx, dphidx, kappa_eff, D_eff = set_up_cons_eq(
-            "chargeCons_p", self.x_p, self.c_p, self.phi2_p, self.poros_p(), self.BruggExp_p())
-        i = i_lyte(kappa_eff, dphidx, t_p(c), thermodynamic_factor(c), c, dcdx)
-        eq.Residual = d(i, self.x_p, eCFDM) - self.a_p()*self.portIn_n(self.x_p).j_p
-
-        # Electrolyte: current collector BC's on concentration:
+        # Electrolyte: current collector BC's on concentration and phi:
+        # concentration -- no slope at either current collector
         eq = self.CreateEquation("BC_c_CC_n", "BC for c at the negative current collector")
-        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
-        eq.Residual = d(self.c(x_n), self.x_n, eCFDM)
+        eq.Residual = dc[0]
         eq = self.CreateEquation("BC_c_CC_p", "BC for c at the positive current collector")
-        x_p = eq.DistributeOnDomain(self.x_p, eUpperBound)
-        eq.Residual = d(self.c(x_p), self.x_p, eCFDM)
-
-        # Electrolyte: current collector BC's on phi in electrolyte:
+        eq.Residual = dc[-1]
+        # phi -- no slope at one; arbitrary datum at the other
         eq = self.CreateEquation("BC_phi_CC_n", "BC for phi at the negative current collector")
-        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
-        eq.Residual = self.phi2_n(x_n)  # arbitrary datum for phi field
+        eq.Residual = phi2[0]
         eq = self.CreateEquation("BC_phi_CC_p", "BC for phi at the positive current collector")
-        x_p = eq.DistributeOnDomain(self.x_p, eUpperBound)
-        eq.Residual = d(self.phi2_p(x_n), self.x_p, eCFDM)
+        eq.Residual = dphi2[-1]
 
         # Tie regions together: Continuity of field variables at the electrode-separator interfaces
         # negative-separator
@@ -336,109 +341,34 @@ class ModCell(daeModel):
         eq = self.CreateEquation("sp_phi_cont", "continuity of phi at the separator-positive interface")
         eq.Residual = self.phi2_s(N_s - 1) - self.phi2_p(0)
 
-        # Tie regions together: Conservation equations at the electrode-separator interfaces
-        # We use non-uniform finite difference approximations
-        def dfdx(f_left, f_cent, f_right, h_left, h_right):
-            dfac = 1 + h_right/h_left
-            a = -h_right/(h_left**2*dfac)
-            b = (h_right/h_left**2 - 1/h_right)/dfac
-            c = 1/(h_right*dfac)
-            df = a*f_left + b*f_cent + c*f_right
-            return df
-        h_n = self.L_n() / (N_n - 1)
-        h_s = self.L_s() / (N_s - 1)
-        h_p = self.L_p() / (N_p - 1)
-        # negative-separator
-        eff_factor_left = self.poros_n() / (self.poros_n()**self.BruggExp_n())
-        eff_factor_cent = eff_factor_left
-        eff_factor_right = self.poros_s() / (self.poros_s()**self.BruggExp_s())
-        c_left = self.c_n(N_n - 2)
-        c_cent = self.c_n(N_n - 1)
-        c_right = self.c_s(1)
-        D_eff_left = eff_factor_left * D(c_left)
-        D_eff_cent = eff_factor_cent * D(c_cent)
-        D_eff_right = eff_factor_right * D(c_right)
-        kappa_eff_left = eff_factor_left * kappa(c_left)
-        kappa_eff_cent = eff_factor_cent * kappa(c_cent)
-        kappa_eff_right = eff_factor_right * kappa(c_right)
-        dc_left = dfdx(self.c_n(N_n - 3), self.c_n(N_n - 2), self.c_n(N_n - 1), h_n, h_n)
-        dc_cent = dfdx(self.c_n(N_n - 2), self.c_n(N_n - 1), self.c_s(1), h_n, h_s)
-        dc_right = dfdx(self.c_n(N_n - 1), self.c_s(1), self.c_s(2), h_s, h_s)
-        dphi_left = dfdx(self.phi2_n(N_n - 3), self.phi2_n(N_n - 2), self.phi2_n(N_n - 1), h_n, h_n)
-        dphi_cent = dfdx(self.phi2_n(N_n - 2), self.phi2_n(N_n - 1), self.phi2_s(1), h_n, h_s)
-        dphi_right = dfdx(self.phi2_n(N_n - 1), self.phi2_s(1), self.phi2_s(2), h_s, h_s)
-        i_left = i_lyte(kappa_eff_left, dphi_left, t_p(c_left), thermodynamic_factor(c_left), c_left, dc_left)
-        i_cent = i_lyte(kappa_eff_cent, dphi_cent, t_p(c_cent), thermodynamic_factor(c_cent), c_cent, dc_cent)
-        i_right = i_lyte(kappa_eff_right, dphi_right, t_p(c_right), thermodynamic_factor(c_right), c_right, dc_right)
-        t_m_left = 1 - t_p(c_left)
-        t_m_cent = 1 - t_p(c_cent)
-        t_m_right = 1 - t_p(c_right)
-        dDc = dfdx(D_eff_left*dc_left, D_eff_cent*dc_cent, D_eff_right*dc_right, h_n, h_s)
-        di = dfdx(i_left, i_cent, i_right, h_n, h_s)
-        dt_m = dfdx(t_m_left, t_m_cent, t_m_right, h_n, h_s)
-        eq = self.CreateEquation("massCons_ns")
-        eq.Residual = dt(self.c_n(N_n - 1)) - (dDc + (t_m_cent*di + i_cent*dt_m) / self.F())
-        eq = self.CreateEquation("chargeCons_ns")
-        eq.Residual = di - self.a_n()*self.portIn_n(N_n - 1).j_p
-        # separator-positive
-        eff_factor_left = self.poros_s() / (self.poros_s()**self.BruggExp_s())
-        eff_factor_cent = self.poros_p() / (self.poros_p()**self.BruggExp_p())
-        eff_factor_right = eff_factor_cent
-        c_left = self.c_s(N_n - 2)
-        c_cent = self.c_p(0)
-        c_right = self.c_p(1)
-        D_eff_left = eff_factor_left * D(c_left)
-        D_eff_cent = eff_factor_cent * D(c_cent)
-        D_eff_right = eff_factor_right * D(c_right)
-        kappa_eff_left = eff_factor_left * kappa(c_left)
-        kappa_eff_cent = eff_factor_cent * kappa(c_cent)
-        kappa_eff_right = eff_factor_right * kappa(c_right)
-        dc_left = dfdx(self.c_s(N_n - 3), self.c_s(N_n - 2), self.c_p(0), h_s, h_s)
-        dc_cent = dfdx(self.c_s(N_n - 2), self.c_p(0), self.c_p(1), h_s, h_p)
-        dc_right = dfdx(self.c_p(0), self.c_p(1), self.c_p(2), h_p, h_p)
-        dphi_left = dfdx(self.phi2_n(N_n - 3), self.phi2_n(N_n - 2), self.phi2_p(0), h_s, h_s)
-        dphi_cent = dfdx(self.phi2_n(N_n - 2), self.phi2_p(0), self.phi2_p(1), h_s, h_p)
-        dphi_right = dfdx(self.phi2_p(0), self.phi2_p(1), self.phi2_p(2), h_p, h_p)
-        i_left = i_lyte(kappa_eff_left, dphi_left, t_p(c_left), thermodynamic_factor(c_left), c_left, dc_left)
-        i_cent = i_lyte(kappa_eff_cent, dphi_cent, t_p(c_cent), thermodynamic_factor(c_cent), c_cent, dc_cent)
-        i_right = i_lyte(kappa_eff_right, dphi_right, t_p(c_right), thermodynamic_factor(c_right), c_right, dc_right)
-        t_m_left = 1 - t_p(c_left)
-        t_m_cent = 1 - t_p(c_cent)
-        t_m_right = 1 - t_p(c_right)
-        dDc = dfdx(D_eff_left*dc_left, D_eff_cent*dc_cent, D_eff_right*dc_right, h_s, h_p)
-        di = dfdx(i_left, i_cent, i_right, h_s, h_p)
-        dt_m = dfdx(t_m_left, t_m_cent, t_m_right, h_s, h_p)
-        eq = self.CreateEquation("massCons_sp")
-        eq.Residual = dt(self.c_p(0)) - (dDc + (t_m_cent*di + i_cent*dt_m) / self.F())
-        eq = self.CreateEquation("chargeCons_sp")
-        eq.Residual = di - self.a_p()*self.portIn_p(0).j_p
-
-        # Electrode: charge conservation:
+        # Electrode: charge conservation
+        phi1_n = np.array([self.phi1_n(indx) for indx in range(N_n)])
+        phi1_p = np.array([self.phi1_p(indx) for indx in range(N_p)])
+        dphi1_n = dfdx_vec(phi1_n, h_n*np.ones(N_n-1))
+        d2phi1_n = dfdx_vec(dphi1_n, h_n*np.ones(N_n-1))
+        dphi1_p = dfdx_vec(phi1_p, h_p*np.ones(N_p-1))
+        d2phi1_p = dfdx_vec(dphi1_p, h_p*np.ones(N_p-1))
         # We assume infinite conductivity in the electron conducting phase for simplicity
         # negative
-        eq = self.CreateEquation("phi1_n")
-        x_n = eq.DistributeOnDomain(self.x_n, eOpenOpen)
-        eq.Residual = d2(self.phi1_n(x_n), self.x_n, eCFDM)
-        # At current collector, phi1 = phiCC
-        eq = self.CreateEquation("phi1_n_left")
-        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
-        eq.Residual = self.phi1_n(x_n) - self.phiCC_n()
-        # At electrode-separator interface, no electric current can pass, so dphi/dx = 0
-        eq = self.CreateEquation("phi1_n_right")
-        x_n = eq.DistributeOnDomain(self.x_n, eUpperBound)
-        eq.Residual = d(self.phi1_n(x_n), self.x_n, eCFDM)
+        for indx in range(N_n):
+            eq = self.CreateEquation("phi1_n_{}".format(indx))
+            eq.Residual = d2phi1_n[indx]
         # positive
-        eq = self.CreateEquation("phi1_p")
-        x_p = eq.DistributeOnDomain(self.x_p, eOpenOpen)
-        eq.Residual = d2(self.phi1_p(x_p), self.x_p, eCFDM)
-        # At electrode-separator interface, no electric current can pass, so dphi/dx = 0
-        eq = self.CreateEquation("phi1_n_left")
-        x_n = eq.DistributeOnDomain(self.x_n, eLowerBound)
-        eq.Residual = d(self.phi1_n(x_n), self.x_n, eCFDM)
-        # At current collector, phi1 = phiCC
+        for indx in range(N_p):
+            eq = self.CreateEquation("phi1_p_{}".format(indx))
+            eq.Residual = d2phi1_p[indx]
+
+        # Electrode boundary conditions
+        # at the electrode-separator interfaces, dphi/dx = 0
         eq = self.CreateEquation("phi1_n_right")
-        x_n = eq.DistributeOnDomain(self.x_n, eUpperBound)
-        eq.Residual = self.phi1_n(x_n) - self.phiCC_n()
+        eq.Residual = dphi1_n[-1]
+        eq = self.CreateEquation("phi1_n_left")
+        eq.Residual = dphi1_p[0]
+        # at the current collectors, phi = that of the current collector
+        eq = self.CreateEquation("phi1_n_left")
+        eq.Residual = phi1_n[0] - self.phiCC_n()
+        eq = self.CreateEquation("phi1_p_right")
+        eq.Residual = phi1_p[-1] - self.phiCC_p()
 
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
