@@ -315,7 +315,7 @@ class ModCell(daeModel):
             eq.Residual = dcdt[indx] - (mass_term_d[indx] + mass_term_i[indx])
             # charge
             eq = self.CreateEquation("chargeCons_n_{}".format(indx))
-            eq.Residual = di[indx] - a[indx]*j_p[indx]
+            eq.Residual = di[indx] - self.F()*a[indx]*j_p[indx]
 
         # Electrolyte: current collector BC's on concentration and phi:
         # concentration -- no slope at either current collector
