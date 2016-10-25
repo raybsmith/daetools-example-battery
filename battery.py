@@ -73,11 +73,6 @@ class portFromMacro(daePort):
         self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
         self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
 
-class portFromParticle(daePort):
-    def __init__(self, Name, PortType, Model, Description=""):
-        daePort.__init__(self, Name, PortType, Model, Description)
-        self.j_p = daeVariable("j_p", rxn_t, self, "Reaction rate at particle surface")
-
 class ModParticle(daeModel):
     def __init__(self, Name, Parent=None, Description="", Ds=None, U=None):
         daeModel.__init__(self, Name, Parent, Description)
@@ -104,7 +99,6 @@ class ModParticle(daeModel):
 
         # Ports
         self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
-        self.portOut = portFromParticle("portOut", eOutletPort, self, "outlet to elyte")
         self.phi_2 = self.portIn.phi_2
         self.c_2 = self.portIn.c_2
         self.phi_1 = self.portIn.phi_1
@@ -134,10 +128,6 @@ class ModParticle(daeModel):
         eta_ndim = eta / self.V_thermal()
         eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
 
-        # Set output port info
-        eq = self.CreateEquation("portOut")
-        eq.Residual = self.portOut.j_p() - self.j_p()
-
 class ModCell(daeModel):
     def __init__(self, Name, Parent=None, Description="", process_info=process_info):
         daeModel.__init__(self, Name, Parent, Description)
@@ -160,25 +150,19 @@ class ModCell(daeModel):
 
         # Ports
         self.portsOut_n = np.empty(N_n, dtype=object)
-        self.portsIn_n = np.empty(N_n, dtype=object)
         self.portsOut_p = np.empty(N_p, dtype=object)
-        self.portsIn_p = np.empty(N_p, dtype=object)
         # negative electrode
         for indx in range(N_n):
             self.portsOut_n[indx] = portFromMacro("portOut_n_{}".format(indx), eOutletPort, self, "To particle")
-            self.portsIn_n[indx] = portFromParticle("portIn_n_{}".format(indx), eInletPort, self, "From particle")
         # positive electrode
         for indx in range(N_p):
             self.portsOut_p[indx] = portFromMacro("portOut_p_{}".format(indx), eOutletPort, self, "To particle")
-            self.portsIn_p[indx] = portFromParticle("portIn_p_{}".format(indx), eInletPort, self, "From particle")
 
         # Connect ports
         for indx in range(N_n):
             self.ConnectPorts(self.portsOut_n[indx], self.particles_n[indx].portIn)
-            self.ConnectPorts(self.portsIn_n[indx], self.particles_n[indx].portOut)
         for indx in range(N_p):
             self.ConnectPorts(self.portsOut_p[indx], self.particles_p[indx].portIn)
-            self.ConnectPorts(self.portsIn_p[indx], self.particles_p[indx].portOut)
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -250,9 +234,9 @@ class ModCell(daeModel):
                         + [self.phi2_p(indx) for indx in range(N_p)])
         h = np.hstack((h_n*np.ones(N_n-1), h_s*np.ones(N_s-1), h_p*np.ones(N_p-1)))
         a = np.hstack((self.a_n()*np.ones(N_n), self.a_ref()*np.ones(N_s-2), self.a_p()*np.ones(N_p)))
-        j_p = np.array([self.portsIn_n[indx].j_p() for indx in range(N_n)]
+        j_p = np.array([self.particles_n[indx].j_p() for indx in range(N_n)]
                        + (N_s-2)*[0 * self.j_ref()]
-                       + [self.portsIn_p[indx].j_p() for indx in range(N_p)])
+                       + [self.particles_p[indx].j_p() for indx in range(N_p)])
         eff_factor = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n),
                                 self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
                                 self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p)))
