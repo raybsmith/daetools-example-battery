@@ -20,7 +20,6 @@ rxn_t = daeVariableType(
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 process_info = {"profileType": "CC",
                 "tend": 1 * s,
-                "tramp": 1e-3
                 }
 
 def kappa(c):
@@ -101,6 +100,7 @@ class ModParticle(daeModel):
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
         self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity in the solid")
         self.U_ref = daeParameter("U_ref", V, self, "Reference units for equilibrium voltage of the solid")
+        self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
 
         # Ports
         self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
@@ -130,7 +130,9 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
         eta = self.phi_1() - self.phi_2() - self.U_ref()*self.U(c_surf/self.c_ref())
-        eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta) - Exp((1 - self.alpha())*eta))
+#        eta_ndim = eta * self.F() / (self.R() * self.T())
+        eta_ndim = eta / self.V_thermal()
+        eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
 
         # Set output port info
         eq = self.CreateEquation("portOut")
@@ -219,8 +221,11 @@ class ModCell(daeModel):
         self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity")
         self.cond_ref = daeParameter("cond_ref", S/m, self, "Reference units for conductivity")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Reference electrolyte concentration")
+        self.j_ref = daeParameter("j_ref", mol/(m**2 * s), self, "Reference units for reaction")
+        self.a_ref = daeParameter("a_ref", m**(-1), self, "Reference units for area/volume")
         self.currset = daeParameter("currset", A/m**2, self, "current per electrode area")
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
+        self.tau_ramp = daeParameter("tau_ramp", s, self, "Time scale for ramping voltage or current")
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
@@ -244,9 +249,9 @@ class ModCell(daeModel):
                         + [self.phi2_s(indx) for indx in range(1, N_s-1)]
                         + [self.phi2_p(indx) for indx in range(N_p)])
         h = np.hstack((h_n*np.ones(N_n-1), h_s*np.ones(N_s-1), h_p*np.ones(N_p-1)))
-        a = np.hstack((self.a_n()*np.ones(N_n), np.zeros(N_s-2), self.a_p()*np.ones(N_p)))
+        a = np.hstack((self.a_n()*np.ones(N_n), self.a_ref()*np.ones(N_s-2), self.a_p()*np.ones(N_p)))
         j_p = np.array([self.portsIn_n[indx].j_p() for indx in range(N_n)]
-                       + (N_s-2)*[0]
+                       + (N_s-2)*[0 * self.j_ref()]
                        + [self.portsIn_p[indx].j_p() for indx in range(N_p)])
         eff_factor = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n),
                                 self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
@@ -265,9 +270,9 @@ class ModCell(daeModel):
             b = (h1+h2)/(h1*h2)
             c = -h1/(h2*(h1+h2))
             a = -(b+c)
-            if side == "forward":
+            if direction == "forward":
                 pass
-            elif side == "backward":
+            elif direction == "backward":
                 a *= -1
                 b *= -1
                 c *= -1
@@ -275,9 +280,9 @@ class ModCell(daeModel):
             return df
 
         def dfdx_vec(fvec, hvec):
-            df = np.array([dfdx_direction(fvec[0], fvec[1], fvec[2], h[0], h[1], "forward")]
-                          + [dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:])]
-                          + [dfdx_direction(fvec[-1], fvec[-2], fvec[-3], h[-1], h[-2], "backward")])
+            df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], h[0], h[1], "forward"),
+                            dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
+                            dfdx_direction(fvec[-1], fvec[-2], fvec[-3], h[-1], h[-2], "backward")))
             return df
 
         # Set output port info (connecting c, phi1, phi2 in this model to each particle)
@@ -305,17 +310,19 @@ class ModCell(daeModel):
         dtrans_m = dfdx_vec(1 - t_p(c), h)
         kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
         D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
-        i = -kappa_eff * (dphi2 + 2*V_thm*(1 - t_p)*TF*(1/c)*dcdx)
+        i = -kappa_eff * (dphi2 + 2*V_thm*(1 - t_p(c))*thermodynamic_factor(c)*(1/c)*dc)
         di = dfdx_vec(i, h)
         mass_term_d = dfdx_vec(D_eff*dc, h)
         mass_term_i = (trans_m*di + i*dtrans_m)/self.F()
         for indx in range(1, len(c)-1):
             # mass
-            eq = self.CreateEquation("massCons_n_{}".format(indx))
+            eq = self.CreateEquation("massCons_{}".format(indx))
             eq.Residual = dcdt[indx] - (mass_term_d[indx] + mass_term_i[indx])
             # charge
-            eq = self.CreateEquation("chargeCons_n_{}".format(indx))
+            eq = self.CreateEquation("chargeCons_{}".format(indx))
             eq.Residual = di[indx] - self.F()*a[indx]*j_p[indx]
+#            eq.Residual = di[indx] - a[indx]*j_p[indx]
+#            eq.Residual = di[indx] - self.F()
 
         # Electrolyte: current collector BC's on concentration and phi:
         # concentration -- no slope at either current collector
@@ -378,15 +385,14 @@ class ModCell(daeModel):
         eq = self.CreateEquation("Voltage")
         eq.Residual = self.phiCC_p() - self.phiCC_n()
 
-        tend, tramp = pinfo["tend"], pinfo["tramp"]
         if pinfo["profileType"] == "CC":
             # Total Current Constraint Equation
             eq = self.CreateEquation("Total_Current_Constraint")
-            eq.Residual = self.current() - self.currset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
+            eq.Residual = self.current() - self.currset()*(1 - np.exp(-Time()/self.tau_ramp()))
         elif pinfo["profileType"] == "CV":
             # Keep applied potential constant
             eq = self.CreateEquation("applied_potential")
-            eq.Residual = self.V() - self.Vset()*(1 - np.exp(-dae.Time()/(tend*tramp)))
+            eq.Residual = self.V() - self.Vset()*(1 - np.exp(-Time()/self.tau_ramp()))
 
 
 class SimBattery(daeSimulation):
@@ -441,8 +447,11 @@ class SimBattery(daeSimulation):
         self.m.D_ref.SetValue(1 * m**2/s)
         self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
+        self.m.j_ref.SetValue(1 * mol/(m**2 * s))
+        self.m.a_ref.SetValue(1 * m**(-1))
         self.m.currset.SetValue(1e-4 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
+        self.m.tau_ramp.SetValue(1e-3 * process_info["tend"])
         # Parameters in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
@@ -455,6 +464,7 @@ class SimBattery(daeSimulation):
             p.c_ref.SetValue(self.csmax_n)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
+            p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
@@ -466,19 +476,20 @@ class SimBattery(daeSimulation):
             p.c_ref.SetValue(self.csmax_p)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
+            p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
 
     def SetUpVariables(self):
         cs0_n = self.ff0_n * self.csmax_n
         cs0_p = self.ff0_p * self.csmax_p
         # ModCell
         for indx_x_n in range(1, self.m.x_n.NumberOfPoints-1):
-            self.m.c_n(indx_x_n).SetInitialCondition(indx_x_n, 1e3 * mol/m**3)
-            self.m.phi1_n(indx_x_n).SetInitialGuess(indx_x_n, U_n(cs0_n))
+            self.m.c_n.SetInitialCondition(indx_x_n, 1e3 * mol/m**3)
+            self.m.phi1_n.SetInitialGuess(indx_x_n, U_n(cs0_n))
         for indx_x_s in range(1, self.m.x_s.NumberOfPoints-1):
-            self.m.c_s(indx_x_s).SetInitialCondition(indx_x_s, 1e3 * mol/m**3)
+            self.m.c_s.SetInitialCondition(indx_x_s, 1e3 * mol/m**3)
         for indx_x_p in range(1, self.m.x_p.NumberOfPoints-1):
-            self.m.c_p(indx_x_p).SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
-            self.m.phi1_p(indx_x_p).SetInitialGuess(indx_x_p, U_p(cs0_p))
+            self.m.c_p.SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
+            self.m.phi1_p.SetInitialGuess(indx_x_p, U_p(cs0_p))
         self.m.phiCC_n.SetInitialGuess(U_n(cs0_n))
         self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
         # particles
