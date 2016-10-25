@@ -310,7 +310,7 @@ class ModCell(daeModel):
         dtrans_m = dfdx_vec(1 - t_p(c), h)
         kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
         D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
-        i = -kappa_eff * (dphi2 + 2*V_thm*(1 - t_p(c))*thermodynamic_factor(c)*(1/c)*dc)
+        i = -kappa_eff * (dphi2 - 2*V_thm*(1 - t_p(c))*thermodynamic_factor(c)*(1/c)*dc)
         di = dfdx_vec(i, h)
         mass_term_d = dfdx_vec(D_eff*dc, h)
         mass_term_i = (trans_m*di + i*dtrans_m)/self.F()
@@ -320,9 +320,7 @@ class ModCell(daeModel):
             eq.Residual = dcdt[indx] - (mass_term_d[indx] + mass_term_i[indx])
             # charge
             eq = self.CreateEquation("chargeCons_{}".format(indx))
-            eq.Residual = di[indx] - self.F()*a[indx]*j_p[indx]
-#            eq.Residual = di[indx] - a[indx]*j_p[indx]
-#            eq.Residual = di[indx] - self.F()
+            eq.Residual = -di[indx] - self.F()*a[indx]*j_p[indx]
 
         # Electrolyte: current collector BC's on concentration and phi:
         # concentration -- no slope at either current collector
