@@ -56,14 +56,14 @@ def U_n(y):
     """Return the equilibrium potential (V vs Li) of the negative electrode active material
     as a function of solid filling fraction, y.
     """
-    out = 0.1  # V
+    out = 0.0  # V
     return out
 
 def U_p(y):
     """Return the equilibrium potential (V vs Li) of the positive electrode active material
     as a function of solid filling fraction, y.
     """
-    out = 2.0  # V
+    out = 0.000  # V
     return out
 
 class portFromMacro(daePort):
@@ -371,13 +371,13 @@ class SimBattery(daeSimulation):
         self.L_n = 100e-6 * m
         self.L_s = 80e-6 * m
         self.L_p = 100e-6 * m
-        self.N_n = 3
-        self.N_s = 3
-        self.N_p = 3
-        self.NR_n = 3
-        self.NR_p = 3
-        self.Rp_n = 10e-6 * m
-        self.Rp_p = 10e-6 * m
+        self.N_n = 10
+        self.N_s = 10
+        self.N_p = 10
+        self.NR_n = 10
+        self.NR_p = 10
+        self.Rp_n = 1e-6 * m
+        self.Rp_p = 1e-6 * m
         self.csmax_n = 13e3 * mol/m**3
         self.csmax_p = 5e3 * mol/m**3
         self.ff0_n = 0.01
@@ -418,9 +418,9 @@ class SimBattery(daeSimulation):
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.j_ref.SetValue(1 * mol/(m**2 * s))
         self.m.a_ref.SetValue(1 * m**(-1))
-        self.m.currset.SetValue(1e-4 * A/m**2)
+        self.m.currset.SetValue(0e-4 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
-        self.m.tau_ramp.SetValue(1e-3 * process_info["tend"])
+        self.m.tau_ramp.SetValue(1e-1 * process_info["tend"])
         # Parameters in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
