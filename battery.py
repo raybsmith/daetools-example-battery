@@ -469,9 +469,9 @@ class SimBattery(daeSimulation):
         for indx_x_p in range(0, self.m.x_p.NumberOfPoints-1):
             self.m.c_p.SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
         self.m.phi1_n.SetInitialGuesses(U_n(cs0_n) * V)
-        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n))
+        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n) * V)
         self.m.phi1_p.SetInitialGuesses(U_p(cs0_p) * V)
-        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
+        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p) * V)
         # particles
         for indx_n in range(self.m.x_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
