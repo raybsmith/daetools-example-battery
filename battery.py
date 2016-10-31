@@ -44,12 +44,12 @@ def t_p(c):
 
 def Ds_n(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12  # m**2/s
+    out = 1e-12 * y/y  # m**2/s
     return out
 
 def Ds_p(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12  # m**2/s
+    out = 1e-12 * y/y  # m**2/s
     return out
 
 def U_n(y):
@@ -118,12 +118,15 @@ class ModParticle(daeModel):
         # Parameter
         self.w = daeParameter("w", m**2, self, "Weight factor for operators")
         self.w.DistributeOnDomain(self.r)
+        self.rval = daeParameter("rval", m, self, "Value of the radius at each mesh point")
+        self.rval.DistributeOnDomain(self.r)
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
         self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity in the solid")
         self.U_ref = daeParameter("U_ref", V, self, "Reference units for equilibrium voltage of the solid")
         self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
+        self.R = daeParameter("R", m, self, "Radius of particle")
 
         # Ports
         self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
@@ -133,21 +136,25 @@ class ModParticle(daeModel):
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
-        eq = self.CreateEquation("MassCons", "Mass conservation eq.")
-        r = eq.DistributeOnDomain(self.r, eOpenOpen)
-        c = self.c(r)
-        w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
+        N = self.r.NumberOfPoints
+        c = np.array([self.c(indx) for indx in range(N)])
+        dcdt = np.array([self.c.dt(indx) for indx in range(N)])
+        h = (self.R() / (N - 1)) * np.ones(N-1)
+        D = self.D_ref() * self.Ds(c / self.c_ref())
+        dc = dfdx_vec(c, h)
+        dD = dfdx_vec(D, h)
+        d2c = dfdx_vec(dc, h)
+
+        for indx in range(1, N-1):
+            eq = self.CreateEquation("MassCons_{}".format(indx))
+            rval = self.rval(indx)
+            eq.Residual = dcdt[indx] - (D[indx]*d2c[indx] + 2*D[indx]/rval*dc[indx] + dD[indx]*dc[indx])
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
-        r = eq.DistributeOnDomain(self.r, eLowerBound)
-        c = self.c(r)
-        eq.Residual = d(c, self.r, eCFDM)
+        eq.Residual = dc[0]
 
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
-        r = eq.DistributeOnDomain(self.r, eUpperBound)
-        c = self.c(r)
-        eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
+        eq.Residual = D[-1]*dc[-1] - self.j_p()
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
@@ -376,8 +383,8 @@ class SimBattery(daeSimulation):
         self.N_p = 10
         self.NR_n = 10
         self.NR_p = 10
-        self.Rp_n = 1e-6 * m
-        self.Rp_p = 1e-6 * m
+        self.R_n = 1e-6 * m
+        self.R_p = 1e-6 * m
         self.csmax_n = 13e3 * mol/m**3
         self.csmax_p = 5e3 * mol/m**3
         self.ff0_n = 0.01
@@ -395,9 +402,9 @@ class SimBattery(daeSimulation):
         self.m.x_p.CreateStructuredGrid(self.N_p - 1, 0, self.L_p.value)
         # Domains in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
-            self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.Rp_n.value)
+            self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.R_n.value)
         for indx_p in range(self.m.x_p.NumberOfPoints):
-            self.m.particles_p[indx_p].r.CreateStructuredGrid(self.NR_p - 1, 0, self.Rp_p.value)
+            self.m.particles_p[indx_p].r.CreateStructuredGrid(self.NR_p - 1, 0, self.R_p.value)
         # Parameters in ModCell
         self.m.F.SetValue(96485.34 * A*s/mol)
         self.m.R.SetValue(8.31447 * J/(mol*K))
@@ -411,8 +418,8 @@ class SimBattery(daeSimulation):
         self.m.poros_n.SetValue(0.3)
         self.m.poros_s.SetValue(0.4)
         self.m.poros_p.SetValue(0.3)
-        self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*3/self.Rp_n)
-        self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*3/self.Rp_p)
+        self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*3/self.R_n)
+        self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*3/self.R_p)
         self.m.D_ref.SetValue(1 * m**2/s)
         self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
@@ -426,26 +433,30 @@ class SimBattery(daeSimulation):
             p = self.m.particles_n[indx_n]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.Rp_n.value, N) * m
+            rvec[:] = np.linspace(0, self.R_n.value, N) * m
             p.w.SetValues(rvec**2)
+            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.R.SetValue(self.R_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.Rp_p.value, N) * m
+            rvec[:] = np.linspace(0, self.R_p.value, N) * m
             p.w.SetValues(rvec**2)
+            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.R.SetValue(self.R_p)
 
     def SetUpVariables(self):
         cs0_n = self.ff0_n * self.csmax_n
