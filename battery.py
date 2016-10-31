@@ -166,6 +166,7 @@ class ModCell(daeModel):
         self.x_n = daeDomain("x_n", self, m, "X domain in negative electrode")
         self.x_s = daeDomain("x_s", self, m, "X domain in separator")
         self.x_p = daeDomain("x_p", self, m, "X domain in positive electrode")
+        self.x_all = daeDomain("x_all", self, m, "X domain over full cell")
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -185,6 +186,8 @@ class ModCell(daeModel):
         self.c_p.DistributeOnDomain(self.x_p)
         self.phi1_p.DistributeOnDomain(self.x_p)
         self.phi2_p.DistributeOnDomain(self.x_p)
+        self.i2 = daeVariable("i2", current_dens_t, self, "Electrolyte current density")
+        self.i2.DistributeOnDomain(self.x_all)
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
@@ -264,6 +267,9 @@ class ModCell(daeModel):
         kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
         D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
         i = -kappa_eff * (dphi2 - 2*V_thm*(1 - t_p(c))*thermodynamic_factor(c)*(1/c)*dc)
+        for indx in range(self.x_all.NumberOfPoints):
+            eq = self.CreateEquation("i2_{}".format(indx))
+            eq.Residual = self.i2(indx) - i[indx]
         di = dfdx_vec(i, h)
         mass_term_d = dfdx_vec(D_eff*dc, h)
         mass_term_i = (trans_m*di + i*dtrans_m)/self.F()
@@ -363,6 +369,9 @@ class SimBattery(daeSimulation):
         self.m.x_n.CreateStructuredGrid(self.N_n - 1, 0, self.L_n.value)
         self.m.x_s.CreateStructuredGrid(self.N_s - 1, 0, self.L_s.value)
         self.m.x_p.CreateStructuredGrid(self.N_p - 1, 0, self.L_p.value)
+        self.m.x_all.CreateStructuredGrid(
+            self.N_n + self.N_s + self.N_p - 2 - 1,
+            0, self.L_n.value + self.L_s.value + self.L_p.value)
         # Domains in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
             self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.R_n.value)
