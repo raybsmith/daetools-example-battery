@@ -94,15 +94,8 @@ def dfdx_vec(fvec, hvec):
                     dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
     return df
 
-class portFromMacro(daePort):
-    def __init__(self, Name, PortType, Model, Description=""):
-        daePort.__init__(self, Name, PortType, Model, Description)
-        self.c_2 = daeVariable("c_2", conc_t, self, "Concentration in electrolyte")
-        self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
-        self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
-
 class ModParticle(daeModel):
-    def __init__(self, Name, Parent=None, Description="", Ds=None, U=None):
+    def __init__(self, Name, pindx, c_2, phi_2, phi_1, Ds, U, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
         self.Ds = Ds
         self.U = U
@@ -128,11 +121,10 @@ class ModParticle(daeModel):
         self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
         self.R = daeParameter("R", m, self, "Radius of particle")
 
-        # Ports
-        self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
-        self.phi_2 = self.portIn.phi_2
-        self.c_2 = self.portIn.c_2
-        self.phi_1 = self.portIn.phi_1
+        self.pindx = pindx
+        self.phi_2 = phi_2
+        self.c_2 = c_2
+        self.phi_1 = phi_1
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
@@ -158,7 +150,7 @@ class ModParticle(daeModel):
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
-        eta = self.phi_1() - self.phi_2() - self.U_ref()*self.U(c_surf/self.c_ref())
+        eta = self.phi_1(self.pindx) - self.phi_2(self.pindx) - self.U_ref()*self.U(c_surf/self.c_ref())
         eta_ndim = eta / self.V_thermal()
         eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
 
@@ -171,32 +163,6 @@ class ModCell(daeModel):
         self.x_n = daeDomain("x_n", self, m, "X domain in negative electrode")
         self.x_s = daeDomain("x_s", self, m, "X domain in separator")
         self.x_p = daeDomain("x_p", self, m, "X domain in positive electrode")
-
-        # Sub-models
-        N_n = self.process_info["N_n"]
-        N_p = self.process_info["N_p"]
-        self.particles_n = np.empty(N_n, dtype=object)
-        self.particles_p = np.empty(N_p, dtype=object)
-        for indx in range(N_n):
-            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), self, Ds=Ds_n, U=U_n)
-        for indx in range(N_p):
-            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), self, Ds=Ds_p, U=U_p)
-
-        # Ports
-        self.portsOut_n = np.empty(N_n, dtype=object)
-        self.portsOut_p = np.empty(N_p, dtype=object)
-        # negative electrode
-        for indx in range(N_n):
-            self.portsOut_n[indx] = portFromMacro("portOut_n_{}".format(indx), eOutletPort, self, "To particle")
-        # positive electrode
-        for indx in range(N_p):
-            self.portsOut_p[indx] = portFromMacro("portOut_p_{}".format(indx), eOutletPort, self, "To particle")
-
-        # Connect ports
-        for indx in range(N_n):
-            self.ConnectPorts(self.portsOut_n[indx], self.particles_n[indx].portIn)
-        for indx in range(N_p):
-            self.ConnectPorts(self.portsOut_p[indx], self.particles_p[indx].portIn)
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -245,6 +211,18 @@ class ModCell(daeModel):
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
         self.tau_ramp = daeParameter("tau_ramp", s, self, "Time scale for ramping voltage or current")
 
+        # Sub-models
+        N_n = self.process_info["N_n"]
+        N_p = self.process_info["N_p"]
+        self.particles_n = np.empty(N_n, dtype=object)
+        self.particles_p = np.empty(N_p, dtype=object)
+        for indx in range(N_n):
+            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), indx, self.c_n,
+                                                 self.phi2_n, self.phi1_n, Ds_n, U_n, Parent=self)
+        for indx in range(N_p):
+            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), indx, self.c_p,
+                                                 self.phi2_p, self.phi1_p, Ds_p, U_p, Parent=self)
+
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
         pinfo = self.process_info
@@ -274,24 +252,6 @@ class ModCell(daeModel):
         eff_factor = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n),
                                 self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
                                 self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p)))
-
-        # Set output port info (connecting c, phi1, phi2 in this model to each particle)
-        # negative electrode
-        for indx in range(N_n):
-            eq = self.CreateEquation("portOut_n_c_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].c_2() - self.c_n(indx)
-            eq = self.CreateEquation("portOut_n_phi2_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].phi_2() - self.phi2_n(indx)
-            eq = self.CreateEquation("portOut_n_phi1_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].phi_1() - self.phi1_n(indx)
-        # positive electrode
-        for indx in range(N_p):
-            eq = self.CreateEquation("portOut_p_c_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].c_2() - self.c_p(indx)
-            eq = self.CreateEquation("portOut_p_phi2_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].phi_2() - self.phi2_p(indx)
-            eq = self.CreateEquation("portOut_p_phi1_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].phi_1() - self.phi1_p(indx)
 
         # Electrolyte: mass and charge conservation
         dc = dfdx_vec(c, h)
