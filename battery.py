@@ -152,7 +152,8 @@ class ModParticle(daeModel):
         c_surf = self.c(self.r.NumberOfPoints - 1)
         eta = self.phi_1(self.pindx) - self.phi_2(self.pindx) - self.U_ref()*self.U(c_surf/self.c_ref())
         eta_ndim = eta / self.V_thermal()
-        eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
+#        eq.Residual = self.j_p() - self.j_0() * (np.exp(-self.alpha()*eta_ndim) - np.exp((1 - self.alpha())*eta_ndim))
+        eq.Residual = self.j_p() + self.j_0() * eta_ndim
 
 class ModCell(daeModel):
     def __init__(self, Name, Parent=None, Description="", process_info=process_info):
@@ -347,8 +348,8 @@ class SimBattery(daeSimulation):
         self.R_p = 1e-6 * m
         self.csmax_n = 13e3 * mol/m**3
         self.csmax_p = 5e3 * mol/m**3
-        self.ff0_n = 0.01
-        self.ff0_p = 0.99
+        self.ff0_n = 0.99
+        self.ff0_p = 0.01
         self.process_info = process_info
         self.process_info["N_n"] = self.N_n
         self.process_info["N_s"] = self.N_s
@@ -385,7 +386,7 @@ class SimBattery(daeSimulation):
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.j_ref.SetValue(1 * mol/(m**2 * s))
         self.m.a_ref.SetValue(1 * m**(-1))
-        self.m.currset.SetValue(0e-4 * A/m**2)
+        self.m.currset.SetValue(1e-4 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
         self.m.tau_ramp.SetValue(1e-1 * process_info["tend"])
         # Parameters in each particle
