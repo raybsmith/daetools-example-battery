@@ -263,9 +263,9 @@ class ModCell(daeModel):
             return df
 
         def dfdx_vec(fvec, hvec):
-            df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], h[0], h[1], "forward"),
+            df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
                             dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
-                            dfdx_direction(fvec[-1], fvec[-2], fvec[-3], h[-1], h[-2], "backward")))
+                            dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
             return df
 
         # Set output port info (connecting c, phi1, phi2 in this model to each particle)
