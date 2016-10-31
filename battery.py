@@ -140,7 +140,9 @@ class ModParticle(daeModel):
         for indx in range(1, N-1):
             eq = self.CreateEquation("MassCons_{}".format(indx))
             rval = self.rval(indx)
-            eq.Residual = dcdt[indx] - (D[indx]*d2c[indx] + 2*D[indx]/rval*dc[indx] + dD[indx]*dc[indx])
+            w = self.w(indx)
+#            eq.Residual = dcdt[indx] - (D[indx]*d2c[indx] + 2*D[indx]/rval*dc[indx] + dD[indx]*dc[indx])
+            eq.Residual = dcdt[indx] - 1/w*dfdx_vec(w*D*dc, h)[indx]
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
         eq.Residual = dc[0]
@@ -339,9 +341,9 @@ class SimBattery(daeSimulation):
         self.L_n = 100e-6 * m
         self.L_s = 80e-6 * m
         self.L_p = 100e-6 * m
-        self.N_n = 10
-        self.N_s = 10
-        self.N_p = 10
+        self.N_n = 30
+        self.N_s = 30
+        self.N_p = 30
         self.NR_n = 10
         self.NR_p = 10
         self.R_n = 1e-6 * m
