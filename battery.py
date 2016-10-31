@@ -66,6 +66,34 @@ def U_p(y):
     out = 0.000  # V
     return out
 
+# Non-uniform finite difference approximations
+def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
+    dfac = 1 + h_right/h_left
+    a = -h_right/(h_left**2*dfac)
+    b = (h_right/h_left**2 - 1/h_right)/dfac
+    c = 1/(h_right*dfac)
+    df = a*f_left + b*f_cent + c*f_right
+    return df
+
+def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
+    b = (h1+h2)/(h1*h2)
+    c = -h1/(h2*(h1+h2))
+    a = -(b+c)
+    if direction == "forward":
+        pass
+    elif direction == "backward":
+        a *= -1
+        b *= -1
+        c *= -1
+    df = a*f_cent + b*f_side1 + c*f_side2
+    return df
+
+def dfdx_vec(fvec, hvec):
+    df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
+                    dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
+                    dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
+    return df
+
 class portFromMacro(daePort):
     def __init__(self, Name, PortType, Model, Description=""):
         daePort.__init__(self, Name, PortType, Model, Description)
@@ -239,34 +267,6 @@ class ModCell(daeModel):
         eff_factor = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n),
                                 self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
                                 self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p)))
-
-        # Non-uniform finite difference approximations
-        def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
-            dfac = 1 + h_right/h_left
-            a = -h_right/(h_left**2*dfac)
-            b = (h_right/h_left**2 - 1/h_right)/dfac
-            c = 1/(h_right*dfac)
-            df = a*f_left + b*f_cent + c*f_right
-            return df
-
-        def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
-            b = (h1+h2)/(h1*h2)
-            c = -h1/(h2*(h1+h2))
-            a = -(b+c)
-            if direction == "forward":
-                pass
-            elif direction == "backward":
-                a *= -1
-                b *= -1
-                c *= -1
-            df = a*f_cent + b*f_side1 + c*f_side2
-            return df
-
-        def dfdx_vec(fvec, hvec):
-            df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
-                            dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
-                            dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
-            return df
 
         # Set output port info (connecting c, phi1, phi2 in this model to each particle)
         # negative electrode
