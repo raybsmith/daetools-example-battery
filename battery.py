@@ -19,12 +19,12 @@ rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 process_info = {"profileType": "CC",
-                "tend": 1 * s,
+                "tend": 1e4 * s,
                 }
 
 def kappa(c):
     """Return the conductivity of the electrolyte in S/m as a function of concentration in M."""
-    out = 1  # S/m
+    out = 0.1  # S/m
     return out
 
 def D(c):
@@ -44,12 +44,12 @@ def t_p(c):
 
 def Ds_n(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12  # m**2/s
+    out = 1e-12 * y/y  # m**2/s
     return out
 
 def Ds_p(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12  # m**2/s
+    out = 1e-12 * y/y  # m**2/s
     return out
 
 def U_n(y):
@@ -66,15 +66,36 @@ def U_p(y):
     out = 0.000  # V
     return out
 
-class portFromMacro(daePort):
-    def __init__(self, Name, PortType, Model, Description=""):
-        daePort.__init__(self, Name, PortType, Model, Description)
-        self.c_2 = daeVariable("c_2", conc_t, self, "Concentration in electrolyte")
-        self.phi_2 = daeVariable("phi_2", elec_pot_t, self, "Electric potential in electrolyte")
-        self.phi_1 = daeVariable("phi_1", elec_pot_t, self, "Electric potential in bulk electrode")
+# Non-uniform finite difference approximations
+def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
+    dfac = 1 + h_right/h_left
+    a = -h_right/(h_left**2*dfac)
+    b = (h_right/h_left**2 - 1/h_right)/dfac
+    c = 1/(h_right*dfac)
+    df = a*f_left + b*f_cent + c*f_right
+    return df
+
+def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
+    b = (h1+h2)/(h1*h2)
+    c = -h1/(h2*(h1+h2))
+    a = -(b+c)
+    if direction == "forward":
+        pass
+    elif direction == "backward":
+        a *= -1
+        b *= -1
+        c *= -1
+    df = a*f_cent + b*f_side1 + c*f_side2
+    return df
+
+def dfdx_vec(fvec, hvec):
+    df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
+                    dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
+                    dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
+    return df
 
 class ModParticle(daeModel):
-    def __init__(self, Name, Parent=None, Description="", Ds=None, U=None):
+    def __init__(self, Name, pindx, c_2, phi_2, phi_1, Ds, U, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
         self.Ds = Ds
         self.U = U
@@ -90,42 +111,51 @@ class ModParticle(daeModel):
         # Parameter
         self.w = daeParameter("w", m**2, self, "Weight factor for operators")
         self.w.DistributeOnDomain(self.r)
+        self.rval = daeParameter("rval", m, self, "Value of the radius at each mesh point")
+        self.rval.DistributeOnDomain(self.r)
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
         self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity in the solid")
         self.U_ref = daeParameter("U_ref", V, self, "Reference units for equilibrium voltage of the solid")
         self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
+        self.R = daeParameter("R", m, self, "Radius of particle")
 
-        # Ports
-        self.portIn = portFromMacro("portInMacro", eInletPort, self, "inlet port from macroscopic phases")
-        self.phi_2 = self.portIn.phi_2
-        self.c_2 = self.portIn.c_2
-        self.phi_1 = self.portIn.phi_1
+        self.pindx = pindx
+        self.phi_2 = phi_2
+        self.c_2 = c_2
+        self.phi_1 = phi_1
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
-        eq = self.CreateEquation("MassCons", "Mass conservation eq.")
-        r = eq.DistributeOnDomain(self.r, eOpenOpen)
-        c = self.c(r)
-        w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
+        N = self.r.NumberOfPoints
+        c = np.array([self.c(indx) for indx in range(N)])
+        dcdt = np.array([self.c.dt(indx) for indx in range(N)])
+        h = (self.R() / (N - 1)) * np.ones(N-1)
+        D = self.D_ref() * self.Ds(c / self.c_ref())
+        dc = dfdx_vec(c, h)
+        dD = dfdx_vec(D, h)
+        d2c = dfdx_vec(dc, h)
+
+        for indx in range(1, N-1):
+            eq = self.CreateEquation("MassCons_{}".format(indx))
+            rval = self.rval(indx)
+            w = self.w(indx)
+#            eq.Residual = dcdt[indx] - (D[indx]*d2c[indx] + 2*D[indx]/rval*dc[indx] + dD[indx]*dc[indx])
+            eq.Residual = dcdt[indx] - 1/w*dfdx_vec(w*D*dc, h)[indx]
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
-        r = eq.DistributeOnDomain(self.r, eLowerBound)
-        c = self.c(r)
-        eq.Residual = d(c, self.r, eCFDM)
+        eq.Residual = dc[0]
 
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
-        r = eq.DistributeOnDomain(self.r, eUpperBound)
-        c = self.c(r)
-        eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
+        eq.Residual = D[-1]*dc[-1] - self.j_p()
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
-        eta = self.phi_1() - self.phi_2() - self.U_ref()*self.U(c_surf/self.c_ref())
+        eta = self.phi_1(self.pindx) - self.phi_2(self.pindx) - self.U_ref()*self.U(c_surf/self.c_ref())
         eta_ndim = eta / self.V_thermal()
-        eq.Residual = self.j_p() - self.j_0() * (Exp(-self.alpha()*eta_ndim) - Exp((1 - self.alpha())*eta_ndim))
+#        eq.Residual = self.j_p() - self.j_0() * (np.exp(-self.alpha()*eta_ndim) - np.exp((1 - self.alpha())*eta_ndim))
+        eq.Residual = self.j_p() + self.j_0() * eta_ndim
 
 class ModCell(daeModel):
     def __init__(self, Name, Parent=None, Description="", process_info=process_info):
@@ -136,32 +166,7 @@ class ModCell(daeModel):
         self.x_n = daeDomain("x_n", self, m, "X domain in negative electrode")
         self.x_s = daeDomain("x_s", self, m, "X domain in separator")
         self.x_p = daeDomain("x_p", self, m, "X domain in positive electrode")
-
-        # Sub-models
-        N_n = self.process_info["N_n"]
-        N_p = self.process_info["N_p"]
-        self.particles_n = np.empty(N_n, dtype=object)
-        self.particles_p = np.empty(N_p, dtype=object)
-        for indx in range(N_n):
-            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), self, Ds=Ds_n, U=U_n)
-        for indx in range(N_p):
-            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), self, Ds=Ds_p, U=U_p)
-
-        # Ports
-        self.portsOut_n = np.empty(N_n, dtype=object)
-        self.portsOut_p = np.empty(N_p, dtype=object)
-        # negative electrode
-        for indx in range(N_n):
-            self.portsOut_n[indx] = portFromMacro("portOut_n_{}".format(indx), eOutletPort, self, "To particle")
-        # positive electrode
-        for indx in range(N_p):
-            self.portsOut_p[indx] = portFromMacro("portOut_p_{}".format(indx), eOutletPort, self, "To particle")
-
-        # Connect ports
-        for indx in range(N_n):
-            self.ConnectPorts(self.portsOut_n[indx], self.particles_n[indx].portIn)
-        for indx in range(N_p):
-            self.ConnectPorts(self.portsOut_p[indx], self.particles_p[indx].portIn)
+        self.x_all = daeDomain("x_all", self, m, "X domain over full cell")
 
         # Variables
         # Concentration/potential in different regions of electrolyte and electrode
@@ -181,6 +186,8 @@ class ModCell(daeModel):
         self.c_p.DistributeOnDomain(self.x_p)
         self.phi1_p.DistributeOnDomain(self.x_p)
         self.phi2_p.DistributeOnDomain(self.x_p)
+        self.i2 = daeVariable("i2", current_dens_t, self, "Electrolyte current density")
+        self.i2.DistributeOnDomain(self.x_all)
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
@@ -209,6 +216,18 @@ class ModCell(daeModel):
         self.currset = daeParameter("currset", A/m**2, self, "current per electrode area")
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
         self.tau_ramp = daeParameter("tau_ramp", s, self, "Time scale for ramping voltage or current")
+
+        # Sub-models
+        N_n = self.process_info["N_n"]
+        N_p = self.process_info["N_p"]
+        self.particles_n = np.empty(N_n, dtype=object)
+        self.particles_p = np.empty(N_p, dtype=object)
+        for indx in range(N_n):
+            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), indx, self.c_n,
+                                                 self.phi2_n, self.phi1_n, Ds_n, U_n, Parent=self)
+        for indx in range(N_p):
+            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), indx, self.c_p,
+                                                 self.phi2_p, self.phi1_p, Ds_p, U_p, Parent=self)
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
@@ -240,52 +259,6 @@ class ModCell(daeModel):
                                 self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s-2),
                                 self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p)))
 
-        # Non-uniform finite difference approximations
-        def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
-            dfac = 1 + h_right/h_left
-            a = -h_right/(h_left**2*dfac)
-            b = (h_right/h_left**2 - 1/h_right)/dfac
-            c = 1/(h_right*dfac)
-            df = a*f_left + b*f_cent + c*f_right
-            return df
-
-        def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
-            b = (h1+h2)/(h1*h2)
-            c = -h1/(h2*(h1+h2))
-            a = -(b+c)
-            if direction == "forward":
-                pass
-            elif direction == "backward":
-                a *= -1
-                b *= -1
-                c *= -1
-            df = a*f_cent + b*f_side1 + c*f_side2
-            return df
-
-        def dfdx_vec(fvec, hvec):
-            df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
-                            dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
-                            dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
-            return df
-
-        # Set output port info (connecting c, phi1, phi2 in this model to each particle)
-        # negative electrode
-        for indx in range(N_n):
-            eq = self.CreateEquation("portOut_n_c_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].c_2() - self.c_n(indx)
-            eq = self.CreateEquation("portOut_n_phi2_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].phi_2() - self.phi2_n(indx)
-            eq = self.CreateEquation("portOut_n_phi1_{}".format(indx))
-            eq.Residual = self.portsOut_n[indx].phi_1() - self.phi1_n(indx)
-        # positive electrode
-        for indx in range(N_p):
-            eq = self.CreateEquation("portOut_p_c_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].c_2() - self.c_p(indx)
-            eq = self.CreateEquation("portOut_p_phi2_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].phi_2() - self.phi2_p(indx)
-            eq = self.CreateEquation("portOut_p_phi1_{}".format(indx))
-            eq.Residual = self.portsOut_p[indx].phi_1() - self.phi1_p(indx)
-
         # Electrolyte: mass and charge conservation
         dc = dfdx_vec(c, h)
         dphi2 = dfdx_vec(phi2, h)
@@ -294,6 +267,9 @@ class ModCell(daeModel):
         kappa_eff = eff_factor * self.cond_ref() * kappa(c / self.c_ref())
         D_eff = eff_factor * self.D_ref() * D(c / self.c_ref())
         i = -kappa_eff * (dphi2 - 2*V_thm*(1 - t_p(c))*thermodynamic_factor(c)*(1/c)*dc)
+        for indx in range(self.x_all.NumberOfPoints):
+            eq = self.CreateEquation("i2_{}".format(indx))
+            eq.Residual = self.i2(indx) - i[indx]
         di = dfdx_vec(i, h)
         mass_term_d = dfdx_vec(D_eff*dc, h)
         mass_term_i = (trans_m*di + i*dtrans_m)/self.F()
@@ -368,20 +344,20 @@ class SimBattery(daeSimulation):
     def __init__(self):
         daeSimulation.__init__(self)
         # Define the model we're going to simulate
-        self.L_n = 100e-6 * m
-        self.L_s = 80e-6 * m
-        self.L_p = 100e-6 * m
-        self.N_n = 10
-        self.N_s = 10
-        self.N_p = 10
+        self.L_n = 300e-6 * m
+        self.L_s = 200e-6 * m
+        self.L_p = 300e-6 * m
+        self.N_n = 30
+        self.N_s = 30
+        self.N_p = 30
         self.NR_n = 10
         self.NR_p = 10
-        self.Rp_n = 1e-6 * m
-        self.Rp_p = 1e-6 * m
+        self.R_n = 1e-6 * m
+        self.R_p = 1e-6 * m
         self.csmax_n = 13e3 * mol/m**3
         self.csmax_p = 5e3 * mol/m**3
-        self.ff0_n = 0.01
-        self.ff0_p = 0.99
+        self.ff0_n = 0.99
+        self.ff0_p = 0.01
         self.process_info = process_info
         self.process_info["N_n"] = self.N_n
         self.process_info["N_s"] = self.N_s
@@ -393,11 +369,14 @@ class SimBattery(daeSimulation):
         self.m.x_n.CreateStructuredGrid(self.N_n - 1, 0, self.L_n.value)
         self.m.x_s.CreateStructuredGrid(self.N_s - 1, 0, self.L_s.value)
         self.m.x_p.CreateStructuredGrid(self.N_p - 1, 0, self.L_p.value)
+        self.m.x_all.CreateStructuredGrid(
+            self.N_n + self.N_s + self.N_p - 2 - 1,
+            0, self.L_n.value + self.L_s.value + self.L_p.value)
         # Domains in each particle
         for indx_n in range(self.m.x_n.NumberOfPoints):
-            self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.Rp_n.value)
+            self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.R_n.value)
         for indx_p in range(self.m.x_p.NumberOfPoints):
-            self.m.particles_p[indx_p].r.CreateStructuredGrid(self.NR_p - 1, 0, self.Rp_p.value)
+            self.m.particles_p[indx_p].r.CreateStructuredGrid(self.NR_p - 1, 0, self.R_p.value)
         # Parameters in ModCell
         self.m.F.SetValue(96485.34 * A*s/mol)
         self.m.R.SetValue(8.31447 * J/(mol*K))
@@ -411,14 +390,14 @@ class SimBattery(daeSimulation):
         self.m.poros_n.SetValue(0.3)
         self.m.poros_s.SetValue(0.4)
         self.m.poros_p.SetValue(0.3)
-        self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*3/self.Rp_n)
-        self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*3/self.Rp_p)
+        self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*3/self.R_n)
+        self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*3/self.R_p)
         self.m.D_ref.SetValue(1 * m**2/s)
         self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.j_ref.SetValue(1 * mol/(m**2 * s))
         self.m.a_ref.SetValue(1 * m**(-1))
-        self.m.currset.SetValue(0e-4 * A/m**2)
+        self.m.currset.SetValue(1e+1 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
         self.m.tau_ramp.SetValue(1e-1 * process_info["tend"])
         # Parameters in each particle
@@ -426,26 +405,30 @@ class SimBattery(daeSimulation):
             p = self.m.particles_n[indx_n]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.Rp_n.value, N) * m
+            rvec[:] = np.linspace(0, self.R_n.value, N) * m
             p.w.SetValues(rvec**2)
+            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.R.SetValue(self.R_n)
         for indx_p in range(self.m.x_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
             N = p.r.NumberOfPoints
             rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.Rp_p.value, N) * m
+            rvec[:] = np.linspace(0, self.R_p.value, N) * m
             p.w.SetValues(rvec**2)
+            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.R.SetValue(self.R_p)
 
     def SetUpVariables(self):
         cs0_n = self.ff0_n * self.csmax_n
@@ -458,9 +441,9 @@ class SimBattery(daeSimulation):
         for indx_x_p in range(0, self.m.x_p.NumberOfPoints-1):
             self.m.c_p.SetInitialCondition(indx_x_p, 1e3 * mol/m**3)
         self.m.phi1_n.SetInitialGuesses(U_n(cs0_n) * V)
-        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n))
+        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n) * V)
         self.m.phi1_p.SetInitialGuesses(U_p(cs0_p) * V)
-        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p))
+        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p) * V)
         # particles
         for indx_n in range(self.m.x_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
