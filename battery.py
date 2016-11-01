@@ -297,9 +297,9 @@ class ModCell(daeModel):
         # Electrolyte: mass and charge conservation
         for indx in range(N_centers):
             eq = self.CreateEquation("mass_cons_m_{}".format(indx), "anion mass conservation")
-            eq.Residual = poros[indx]*dcdt[indx] - dN_m[indx]
+            eq.Residual = poros[indx]*dcdt[indx] + dN_m[indx]
             eq = self.CreateEquation("charge_cons_{}".format(indx), "charge conservation")
-            eq.Residual = di[indx] - self.F()*a[indx]*j_p[indx]
+            eq.Residual = -di[indx] - self.F()*a[indx]*j_p[indx]
 
         # Arbitrary datum for electric potential.
         # We apply this in the electrolyte at an arbitrary location, the negative current collector
