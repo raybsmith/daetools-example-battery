@@ -344,10 +344,14 @@ class SimBattery(daeSimulation):
 #        print("cell-widths:\n", np.diff(np.array(fvals)))
 #        zz
         # Domains in ModCell
-        self.m.x_centers_n.CreateArray(self.N_n)
-        self.m.x_centers_p.CreateArray(self.N_p)
-        self.m.x_centers_full.CreateArray(self.N_n + self.N_s + self.N_p)
-        self.m.x_faces_full.CreateArray(self.N_n + self.N_s + self.N_p + 1)
+        self.m.x_centers_n.CreateStructuredGrid(self.N_n - 1, 0, 1)
+        self.m.x_centers_p.CreateStructuredGrid(self.N_p - 1, 0, 1)
+        self.m.x_centers_full.CreateStructuredGrid(self.N_n + self.N_s + self.N_p - 1, 0, 1)
+        self.m.x_faces_full.CreateStructuredGrid(self.N_n + self.N_s + self.N_p, 0, 1)
+        self.m.x_centers_n.Points = [x.value for x in xvec_centers_n]
+        self.m.x_centers_p.Points = [x.value for x in xvec_centers_p]
+        self.m.x_centers_full.Points = [x.value for x in xvec_centers]
+        self.m.x_faces_full.Points = [x.value for x in xvec_faces]
         # Domains in each particle
         for indx_n in range(self.m.x_centers_n.NumberOfPoints):
             self.m.particles_n[indx_n].r.CreateStructuredGrid(self.NR_n - 1, 0, self.R_n.value)
