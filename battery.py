@@ -19,12 +19,12 @@ rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 process_info = {"profileType": "CC",
-                "tend": 1 * s,
+                "tend": 1e4 * s,
                 }
 
 def kappa(c):
     """Return the conductivity of the electrolyte in S/m as a function of concentration in M."""
-    out = 1  # S/m
+    out = 0.1  # S/m
     return out
 
 def D(c):
@@ -344,9 +344,9 @@ class SimBattery(daeSimulation):
     def __init__(self):
         daeSimulation.__init__(self)
         # Define the model we're going to simulate
-        self.L_n = 100e-6 * m
-        self.L_s = 80e-6 * m
-        self.L_p = 100e-6 * m
+        self.L_n = 300e-6 * m
+        self.L_s = 200e-6 * m
+        self.L_p = 300e-6 * m
         self.N_n = 30
         self.N_s = 30
         self.N_p = 30
@@ -397,7 +397,7 @@ class SimBattery(daeSimulation):
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.j_ref.SetValue(1 * mol/(m**2 * s))
         self.m.a_ref.SetValue(1 * m**(-1))
-        self.m.currset.SetValue(1e-4 * A/m**2)
+        self.m.currset.SetValue(1e+1 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
         self.m.tau_ramp.SetValue(1e-1 * process_info["tend"])
         # Parameters in each particle
