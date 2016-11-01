@@ -66,34 +66,6 @@ def U_p(y):
     out = 0.000  # V
     return out
 
-# Non-uniform finite difference approximations
-def dfdx_center(f_left, f_cent, f_right, h_left, h_right):
-    dfac = 1 + h_right/h_left
-    a = -h_right/(h_left**2*dfac)
-    b = (h_right/h_left**2 - 1/h_right)/dfac
-    c = 1/(h_right*dfac)
-    df = a*f_left + b*f_cent + c*f_right
-    return df
-
-def dfdx_direction(f_cent, f_side1, f_side2, h1, h2, direction):
-    b = (h1+h2)/(h1*h2)
-    c = -h1/(h2*(h1+h2))
-    a = -(b+c)
-    if direction == "forward":
-        pass
-    elif direction == "backward":
-        a *= -1
-        b *= -1
-        c *= -1
-    df = a*f_cent + b*f_side1 + c*f_side2
-    return df
-
-def dfdx_vec(fvec, hvec):
-    df = np.hstack((dfdx_direction(fvec[0], fvec[1], fvec[2], hvec[0], hvec[1], "forward"),
-                    dfdx_center(fvec[:-2], fvec[1:-1], fvec[2:], hvec[:-1], hvec[1:]),
-                    dfdx_direction(fvec[-1], fvec[-2], fvec[-3], hvec[-1], hvec[-2], "backward")))
-    return df
-
 class ModParticle(daeModel):
     def __init__(self, Name, pindx_1, pindx_2, c_2, phi_2, phi_1, Ds, U, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
@@ -111,8 +83,6 @@ class ModParticle(daeModel):
         # Parameter
         self.w = daeParameter("w", m**2, self, "Weight factor for operators")
         self.w.DistributeOnDomain(self.r)
-        self.rval = daeParameter("rval", m, self, "Value of the radius at each mesh point")
-        self.rval.DistributeOnDomain(self.r)
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
@@ -129,27 +99,21 @@ class ModParticle(daeModel):
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
-        N = self.r.NumberOfPoints
-        c = np.array([self.c(indx) for indx in range(N)])
-        dcdt = np.array([self.c.dt(indx) for indx in range(N)])
-        h = (self.R() / (N - 1)) * np.ones(N-1)
-        D = self.D_ref() * self.Ds(c / self.c_ref())
-        dc = dfdx_vec(c, h)
-        dD = dfdx_vec(D, h)
-        d2c = dfdx_vec(dc, h)
-
-        for indx in range(1, N-1):
-            eq = self.CreateEquation("MassCons_{}".format(indx))
-            rval = self.rval(indx)
-            w = self.w(indx)
-#            eq.Residual = dcdt[indx] - (D[indx]*d2c[indx] + 2*D[indx]/rval*dc[indx] + dD[indx]*dc[indx])
-            eq.Residual = dcdt[indx] - 1/w*dfdx_vec(w*D*dc, h)[indx]
+        eq = self.CreateEquation("mass_cons")
+        r = eq.DistributeOnDomain(self.r, eOpenOpen)
+        c = self.c(r)
+        w = self.w(r)
+        eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
-        eq.Residual = dc[0]
+        r = eq.DistributeOnDomain(self.r, eLowerBound)
+        c = self.c(r)
+        eq.Residual = d(c, self.r, eCFDM)
 
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
-        eq.Residual = D[-1]*dc[-1] - self.j_p()
+        r = eq.DistributeOnDomain(self.r, eUpperBound)
+        c = self.c(r)
+        eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
 
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
@@ -421,7 +385,6 @@ class SimBattery(daeSimulation):
             rvec = np.empty(N, dtype=object)
             rvec[:] = np.linspace(0, self.R_n.value, N) * m
             p.w.SetValues(rvec**2)
-            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
@@ -435,7 +398,6 @@ class SimBattery(daeSimulation):
             rvec = np.empty(N, dtype=object)
             rvec[:] = np.linspace(0, self.R_p.value, N) * m
             p.w.SetValues(rvec**2)
-            p.rval.SetValues(rvec)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
