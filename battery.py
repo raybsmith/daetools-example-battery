@@ -372,8 +372,8 @@ class SimBattery(daeSimulation):
         self.m.poros_p.SetValue(0.3)
         # NOTE: the `quantity(3, unit())` is a temporary hack to avoid a bug in DAE Tools.
         # It should be replace simply with `3` soon.
-        self.m.a_n.SetValue((1-self.m.poros_n.GetValue())*quantity(3, unit())/self.R_n)
-        self.m.a_p.SetValue((1-self.m.poros_p.GetValue())*quantity(3, unit())/self.R_p)
+        self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*quantity(3, unit())/self.R_n)
+        self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*quantity(3, unit())/self.R_p)
         self.m.D_ref.SetValue(1 * m**2/s)
         self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
@@ -396,7 +396,7 @@ class SimBattery(daeSimulation):
             p.c_ref.SetValue(self.csmax_n)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
-            p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.V_thermal.SetValue(self.m.R.GetQuantity()*self.m.T.GetQuantity()/self.m.F.GetQuantity())
             p.R.SetValue(self.R_n)
         for indx_p in range(self.m.x_centers_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
@@ -409,7 +409,7 @@ class SimBattery(daeSimulation):
             p.c_ref.SetValue(self.csmax_p)
             p.D_ref.SetValue(1 * m**2/s)
             p.U_ref.SetValue(1 * V)
-            p.V_thermal.SetValue(self.m.R.GetValue()*self.m.T.GetValue()/self.m.F.GetValue())
+            p.V_thermal.SetValue(self.m.R.GetQuantity()*self.m.T.GetQuantity()/self.m.F.GetQuantity())
             p.R.SetValue(self.R_p)
 
     def SetUpVariables(self):
