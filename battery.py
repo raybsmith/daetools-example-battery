@@ -285,7 +285,7 @@ class ModCell(daeModel):
 
         # Define the total current.
         eq = self.CreateEquation("Total_Current")
-        eq.Residual = self.current() + np.sum(self.F()*a[:N_n]*j_p[:N_n]*h_centers[1:N_n+1])
+        eq.Residual = self.current() + np.sum(self.F()*a[:N_n]*j_p[:N_n]*h_centers[:N_n])
 
         # Define the measured voltage
         eq = self.CreateEquation("Voltage")
@@ -416,10 +416,10 @@ class SimBattery(daeSimulation):
         # ModCell
         for indx in range(self.m.x_centers_full.NumberOfPoints):
             self.m.c.SetInitialCondition(indx, 1e3 * mol/m**3)
-        self.m.phi1_n.SetInitialGuesses(U_n(cs0_n) * V)
-        self.m.phiCC_n.SetInitialGuess(U_n(cs0_n) * V)
-        self.m.phi1_p.SetInitialGuesses(U_p(cs0_p) * V)
-        self.m.phiCC_p.SetInitialGuess(U_p(cs0_p) * V)
+        self.m.phi1_n.SetInitialGuesses(U_n(self.ff0_n) * V)
+        self.m.phiCC_n.SetInitialGuess(U_n(self.ff0_n) * V)
+        self.m.phi1_p.SetInitialGuesses(U_p(self.ff0_p) * V)
+        self.m.phiCC_p.SetInitialGuess(U_p(self.ff0_p) * V)
         # particles
         for indx_n in range(self.m.x_centers_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
