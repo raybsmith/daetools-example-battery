@@ -19,7 +19,7 @@ rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
 process_info = {"profileType": "CC",
-                "tend": 1e4 * s,
+                "tend": 2*3200e0 * s,
                 }
 
 def kappa(c):
@@ -44,27 +44,36 @@ def t_p(c):
 
 def Ds_n(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12 * y/y  # m**2/s
+    out = 5e-9 * y/y  # m**2/s
     return out
 
 def Ds_p(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
-    out = 1e-12 * y/y  # m**2/s
+    out = 1e-9 * y/y  # m**2/s
     return out
 
 def U_n(y):
     """Return the equilibrium potential (V vs Li) of the negative electrode active material
     as a function of solid filling fraction, y.
     """
-    out = 0.0  # V
-    return out
+    # Carbon (coke), Fuller, Doyle, Newman, 1994
+    out = -0.132 + 1.42*np.exp(-2.52*(0.5*y))
+    # Lithium metal
+#    out = 0.
+    return out  # V
 
 def U_p(y):
     """Return the equilibrium potential (V vs Li) of the positive electrode active material
     as a function of solid filling fraction, y.
     """
-    out = 0.000  # V
-    return out
+    # Mn2O4, Fuller, Doyle, Newman, 1994
+    out = (4.06279 + 0.0677504*np.tanh(-21.8502*y + 12.8268) -
+           0.105734*(1/((1.00167 - y)**(0.379571)) - 1.575994) -
+           0.045*np.exp(-71.69*y**8) +
+           0.01*np.exp(-200*(y - 0.19)))
+    # Lithium metal
+#    out = 0.000
+    return out  # V
 
 class ModParticle(daeModel):
     def __init__(self, Name, pindx_1, pindx_2, c_2, phi_2, phi_1, Ds, U, Parent=None, Description=""):
@@ -304,21 +313,21 @@ class SimBattery(daeSimulation):
     def __init__(self):
         daeSimulation.__init__(self)
         # Define the model we're going to simulate
-        self.L_n = 300e-6 * m
-        self.L_s = 200e-6 * m
-        self.L_p = 300e-6 * m
+        self.L_n = 243e-6 * m
+        self.L_s = 50e-6 * m
+        self.L_p = 200e-6 * m
         self.L_tot = self.L_n + self.L_s + self.L_p
-        self.N_n = 10
-        self.N_s = 10
-        self.N_p = 10
+        self.N_n = 20
+        self.N_s = 20
+        self.N_p = 20
         self.NR_n = 10
         self.NR_p = 10
-        self.R_n = 1e-6 * m
+        self.R_n = 18e-6 * m
         self.R_p = 1e-6 * m
-        self.csmax_n = 13e3 * mol/m**3
-        self.csmax_p = 5e3 * mol/m**3
+        self.csmax_n = 13.2e3 * mol/m**3
+        self.csmax_p = 23.72e3 * mol/m**3
         self.ff0_n = 0.99
-        self.ff0_p = 0.01
+        self.ff0_p = 0.21
         self.process_info = process_info
         self.process_info["N_n"] = self.N_n
         self.process_info["N_s"] = self.N_s
@@ -379,9 +388,9 @@ class SimBattery(daeSimulation):
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.j_ref.SetValue(1 * mol/(m**2 * s))
         self.m.a_ref.SetValue(1 * m**(-1))
-        self.m.currset.SetValue(1e+1 * A/m**2)
+        self.m.currset.SetValue(3e+1 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
-        self.m.tau_ramp.SetValue(1e-1 * process_info["tend"])
+        self.m.tau_ramp.SetValue(1e-3 * process_info["tend"])
         self.m.xval_cells.SetValues(np.array(xvec_centers))
         self.m.xval_faces.SetValues(np.array(xvec_faces))
         # Parameters in each particle
