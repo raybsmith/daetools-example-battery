@@ -345,13 +345,6 @@ class SimBattery(daeSimulation):
         xvec_faces = [0 * m] + [h_n*(1 + indx) for indx in range(self.N_n)]
         xvec_faces += [self.L_n + h_s*(1 + indx) for indx in range(self.N_s)]
         xvec_faces += [(self.L_n + self.L_s) + h_p*(1 + indx) for indx in range(self.N_p)]
-#        cvals = [val.value for val in xvec_centers]
-#        fvals = [val.value for val in xvec_faces]
-#        print("Cell centers:\n", cvals)
-#        print("Cell faces:\n", fvals)
-#        print("cell-center-spacing:\n", np.diff(np.array(cvals)))
-#        print("cell-widths:\n", np.diff(np.array(fvals)))
-#        zz
         # Domains in ModCell
         self.m.x_centers_n.CreateStructuredGrid(self.N_n - 1, 0, 1)
         self.m.x_centers_p.CreateStructuredGrid(self.N_p - 1, 0, 1)
