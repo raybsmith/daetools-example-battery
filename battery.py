@@ -237,15 +237,39 @@ class ModCell(daeModel):
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
+
         pinfo = self.process_info
+        # Thermal voltage = RT/F = kT/e = approximately 0.026 mV at room temp, 25 C
         V_thm = self.R() * self.T() / self.F()
+
+        # We choose to use (cell centered) finite volume discretization for the electrolyte rather
+        # than the built-in finite difference method for a few reasons
+        # - It is a mass conservative method, which is important for quasi-neutral electrolyte models
+        # - It is more stable at high electrolyte depletion than finite difference methods
+        # As a result, we need some information about the domain on which we have discretized our
+        # field variables
+        # With the finite volume method, we store some information at cell centers
+        # (scalar field variables like concentration and electric potential)
+        # and store/calculate some information at the faces between cells
+        # (fluxes like current density and flux of anions)
+        # For more information, see, e.g.,
+        #   http://www.ctcms.nist.gov/fipy/documentation/numerical/discret.html
+        #   https://en.wikipedia.org/wiki/Finite_volume_method
+        # Number of grid cells centers in each of the negative and positive electrodes
         N_n, N_p = self.x_centers_n.NumberOfPoints, self.x_centers_p.NumberOfPoints
+        # Number of grid cell centers and faces along the entire electrode
         N_centers, N_faces = self.x_centers_full.NumberOfPoints, self.x_faces_full.NumberOfPoints
+        # Number of grid cell centers along the separator
         N_s = N_centers - N_n - N_p
+        # Coordinates of the cell centers and cell faces
         center_coords = np.array([self.xval_cells(indx) for indx in range(N_centers)])
         face_coords = np.array([self.xval_faces(indx) for indx in range(N_faces)])
+        # Spacing between cell centers, which we will use for finite difference approximations for fluxes
+        # We add space for a "ghost point" on each end, which will be used for boundary conditions.
         h_centers = np.hstack((np.diff(center_coords)[0], np.diff(center_coords), np.diff(center_coords)[-1]))
+        # Spacing between cell faces.
         h_faces = np.diff(face_coords)
+
         # For convenience, make numpy arrays of variables at cell centers
         phi2 = np.array([self.phi2(indx) for indx in range(N_centers)])
         c = np.array([self.c(indx) for indx in range(N_centers)])
@@ -254,13 +278,16 @@ class ModCell(daeModel):
         j_p = np.array([self.particles_n[indx].j_p() for indx in range(N_n)]
                        + N_s*[0 * self.j_ref()]
                        + [self.particles_p[indx].j_p() for indx in range(N_p)])
-        eff_factor_tmp = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n+1),
-                                    self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s),
-                                    self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p+1)))
-        eff_factor = (2*eff_factor_tmp[1:]*eff_factor_tmp[:-1]) / (eff_factor_tmp[1:] + eff_factor_tmp[:-1])
         poros = np.hstack((self.poros_n()*np.ones(N_n),
                            self.poros_s()*np.ones(N_s),
                            self.poros_p()*np.ones(N_p)))
+        eff_factor_tmp = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n+1),
+                                    self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s),
+                                    self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p+1)))
+        # The eff_factor is a prefactor for the transport in the porous medium compared to transport
+        # in a free solution. It is needed at the cell faces because it is used in calculation of fluxes,
+        # so we use a harmonic mean to approximate the value at the faces.
+        eff_factor = (2*eff_factor_tmp[1:]*eff_factor_tmp[:-1]) / (eff_factor_tmp[1:] + eff_factor_tmp[:-1])
 
         # Boundary conditions on c and phi2 at current collectors.
         # For concentration, Thomas et al., Eq 15
