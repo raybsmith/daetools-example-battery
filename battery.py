@@ -15,6 +15,13 @@ in "Advances in Lithium-ion Batteries". 2002.
 V = J/(A*s)
 S = A/V
 
+# Define a few process parameters that we'll use throughout the module.
+# profileType -- constant current (CC) or constant voltage (CV) operation
+# tend -- time at which to stop the simulation
+process_info = {"profileType": "CC",
+                "tend": 2*3200e0 * s,
+                }
+
 # Define some variable types
 conc_t = daeVariableType(
     name="conc_t", units=mol/(m**3), lowerBound=0,
@@ -28,9 +35,6 @@ current_dens_t = daeVariableType(
 rxn_t = daeVariableType(
     name="rxn_t", units=mol/(m**2 * s), lowerBound=-1e20,
     upperBound=1e20, initialGuess=0, absTolerance=1e-5)
-process_info = {"profileType": "CC",
-                "tend": 2*3200e0 * s,
-                }
 
 def kappa(c):
     """Return the conductivity of the electrolyte in S/m as a function of concentration in M."""
@@ -66,27 +70,33 @@ def U_n(y):
     """Return the equilibrium potential (V vs Li) of the negative electrode active material
     as a function of solid filling fraction, y.
     """
-    # Carbon (coke) -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
-    out = -0.132 + 1.42*np.exp(-2.52*(0.5*y))
-#    # Lithium metal
-#    out = 0.
+    material = "coke"
+    if material == "coke":
+        # Carbon (coke) -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
+        out = -0.132 + 1.42*np.exp(-2.52*(0.5*y))
+    elif material == "Li metal":
+        # Lithium metal
+        out = 0.
     return out  # V
 
 def U_p(y):
     """Return the equilibrium potential (V vs Li) of the positive electrode active material
     as a function of solid filling fraction, y.
     """
-    # Mn2O4 -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
-    out = (4.06279 + 0.0677504*np.tanh(-21.8502*y + 12.8268) -
-           0.105734*(1/((1.00167 - y)**(0.379571)) - 1.575994) -
-           0.045*np.exp(-71.69*y**8) +
-           0.01*np.exp(-200*(y - 0.19)))
-#    # Lithium metal
-#    out = 0.000
+    material = "Mn2O4"
+    if material == "Mn2O4":
+        # Mn2O4 -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
+        out = (4.06279 + 0.0677504*np.tanh(-21.8502*y + 12.8268) -
+               0.105734*(1/((1.00167 - y)**(0.379571)) - 1.575994) -
+               0.045*np.exp(-71.69*y**8) +
+               0.01*np.exp(-200*(y - 0.19)))
+    elif material == "Li metal":
+        # Lithium metal
+        out = 0.
     return out  # V
 
 class ModParticle(daeModel):
-    def __init__(self, Name, pindx_1, pindx_2, c_2, phi_2, phi_1, Ds, U, Parent=None, Description=""):
+    def __init__(self, Name, pindx1, pindx2, c2, phi2, phi1, Ds, U, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
         self.Ds = Ds
         self.U = U
@@ -110,15 +120,16 @@ class ModParticle(daeModel):
         self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
         self.R = daeParameter("R", m, self, "Radius of particle")
 
-        self.pindx_1 = pindx_1
-        self.pindx_2 = pindx_2
-        self.phi_2 = phi_2
-        self.c_2 = c_2
-        self.phi_1 = phi_1
+        self.pindx1 = pindx1
+        self.pindx2 = pindx2
+        self.phi2 = phi2
+        self.c2 = c2
+        self.phi1 = phi1
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
 
+        # Mass conservation in the solid particles governed by (possibly non-linear) Ficks Law diffusion
         # Thomas et al., Eq 17
         eq = self.CreateEquation("mass_cons")
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
@@ -126,24 +137,30 @@ class ModParticle(daeModel):
         w = self.w(r)
         eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
+        # Symmetry at the center from particles with spherical geometry and symmetry
         # Thomas et al., Eq 18
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
         r = eq.DistributeOnDomain(self.r, eLowerBound)
         c = self.c(r)
         eq.Residual = d(c, self.r, eCFDM)
 
+        # Flux at the particle surface given by the electrochemical reaction rate of (di)intercalation
         # Thomas et al., Eq 18
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
         r = eq.DistributeOnDomain(self.r, eUpperBound)
         c = self.c(r)
         eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
 
+        # The rate of electrochemical reaction calculated via the Butler-Volmer
+        # Here, we use a constant exchange current density, but other forms depending on
+        # solid and electrolyte concentrations are commonly used.
         # Thomas et al., Eq 19 and 27
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
-        eta = self.phi_1(self.pindx_1) - self.phi_2(self.pindx_2) - self.U_ref()*self.U(c_surf/self.c_ref())
+        eta = self.phi1(self.pindx1) - self.phi2(self.pindx2) - self.U_ref()*self.U(c_surf/self.c_ref())
         eta_ndim = eta / self.V_thermal()
 #        eq.Residual = self.j_p() - self.j_0() * (np.exp(-self.alpha()*eta_ndim) - np.exp((1 - self.alpha())*eta_ndim))
+        # For now, we use a linearization of the reaction rate with respect to the driving force, eta.
         eq.Residual = self.j_p() + self.j_0() * eta_ndim
 
 class ModCell(daeModel):
@@ -209,13 +226,13 @@ class ModCell(daeModel):
         self.particles_n = np.empty(N_n, dtype=object)
         self.particles_p = np.empty(N_p, dtype=object)
         for indx in range(N_n):
-            indx_1 = indx_2 = indx
-            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), indx_1, indx_2, self.c,
+            indx1 = indx2 = indx
+            self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), indx1, indx2, self.c,
                                                  self.phi2, self.phi1_n, Ds_n, U_n, Parent=self)
         for indx in range(N_p):
-            indx_1 = indx
-            indx_2 = N_n + N_s + indx
-            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), indx_1, indx_2, self.c,
+            indx1 = indx
+            indx2 = N_n + N_s + indx
+            self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), indx1, indx2, self.c,
                                                  self.phi2, self.phi1_p, Ds_p, U_p, Parent=self)
 
     def DeclareEquations(self):
@@ -247,7 +264,7 @@ class ModCell(daeModel):
 
         # Boundary conditions on c and phi2 at current collectors.
         # For concentration, Thomas et al., Eq 15
-        # For phi at current collectors, grad(phi) = 0 is required such that i_2 = 0 at the current collectors
+        # For phi at current collectors, grad(phi) = 0 is required such that i2 = 0 at the current collectors
         # To do these, create "ghost points" on the end of cell-center vectors
         ctmp = np.empty(N_centers + 2, dtype=object)
         ctmp[1:-1] = c
@@ -334,6 +351,11 @@ class ModCell(daeModel):
         eq = self.CreateEquation("Voltage")
         eq.Residual = self.V() - (self.phiCC_p() - self.phiCC_n())
 
+        # For the simulation, we can either specify the voltage and let current be a calculated output,
+        # or we can specify the current and let voltage be a calculated output.
+        # These correspond to CV (constant voltage) and CC (constant current) operation respectively.
+        # We ramp quickly from an equilibrium to the set point to facilitate the numerical calculation
+        # of consistent initial conditions.
         if pinfo["profileType"] == "CC":
             # Total Current Constraint Equation
             eq = self.CreateEquation("Total_Current_Constraint")
