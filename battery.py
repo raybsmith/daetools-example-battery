@@ -12,11 +12,12 @@ in "Advances in Lithium-ion Batteries". 2002.
 
 Here, we make a few simplifications rather than implementing the more complete model described there.
 For example, we (currently)
+ - assume we have two porous electrodes rather than providing the option for a "half cell" in which
+   one electrode is lithium foil.
  - assume infinite conductivity in the electron-conducting phase
  - assume constant exchange current density and linearize the reaction equation (Butler-Volmer)
  - assume no electrolyte convection
  - assume constant and uniform solvent concentration
-
 
 """
 
