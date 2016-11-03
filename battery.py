@@ -2,6 +2,16 @@ from daetools.pyDAE import *
 import numpy as np
 
 from pyUnits import m, s, K, mol, J, A
+
+__doc__ = """Model of a lithium-ion battery based on porous electrode theory as developed
+by John Newman and coworkers. In particular, the equations here are based on a summary
+of the methodology by Karen E. Thomas, John Newman, and Robert M. Darling,
+
+K. Thomas, J. Newman, R. Darling, "Mathematical Modeling of Lithium Batteries"
+in "Advances in Lithium-ion Batteries". 2002.
+
+"""
+
 V = J/(A*s)
 S = A/V
 
@@ -56,9 +66,9 @@ def U_n(y):
     """Return the equilibrium potential (V vs Li) of the negative electrode active material
     as a function of solid filling fraction, y.
     """
-    # Carbon (coke), Fuller, Doyle, Newman, 1994
+    # Carbon (coke) -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
     out = -0.132 + 1.42*np.exp(-2.52*(0.5*y))
-    # Lithium metal
+#    # Lithium metal
 #    out = 0.
     return out  # V
 
@@ -66,12 +76,12 @@ def U_p(y):
     """Return the equilibrium potential (V vs Li) of the positive electrode active material
     as a function of solid filling fraction, y.
     """
-    # Mn2O4, Fuller, Doyle, Newman, 1994
+    # Mn2O4 -- Fuller, Doyle, Newman, J. Electrochem. Soc., 1994
     out = (4.06279 + 0.0677504*np.tanh(-21.8502*y + 12.8268) -
            0.105734*(1/((1.00167 - y)**(0.379571)) - 1.575994) -
            0.045*np.exp(-71.69*y**8) +
            0.01*np.exp(-200*(y - 0.19)))
-    # Lithium metal
+#    # Lithium metal
 #    out = 0.000
     return out  # V
 
@@ -108,22 +118,27 @@ class ModParticle(daeModel):
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
+
+        # Thomas et al., Eq 17
         eq = self.CreateEquation("mass_cons")
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
         w = self.w(r)
         eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
+        # Thomas et al., Eq 18
         eq = self.CreateEquation("CenterSymmetry", "dc/dr = 0 at r=0")
         r = eq.DistributeOnDomain(self.r, eLowerBound)
         c = self.c(r)
         eq.Residual = d(c, self.r, eCFDM)
 
+        # Thomas et al., Eq 18
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
         r = eq.DistributeOnDomain(self.r, eUpperBound)
         c = self.c(r)
         eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
 
+        # Thomas et al., Eq 19 and 27
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
         eta = self.phi_1(self.pindx_1) - self.phi_2(self.pindx_2) - self.U_ref()*self.U(c_surf/self.c_ref())
@@ -231,6 +246,8 @@ class ModCell(daeModel):
                            self.poros_p()*np.ones(N_p)))
 
         # Boundary conditions on c and phi2 at current collectors.
+        # For concentration, Thomas et al., Eq 15
+        # For phi at current collectors, grad(phi) = 0 is required such that i_2 = 0 at the current collectors
         # To do these, create "ghost points" on the end of cell-center vectors
         ctmp = np.empty(N_centers + 2, dtype=object)
         ctmp[1:-1] = c
@@ -252,29 +269,38 @@ class ModCell(daeModel):
         dphi2 = np.diff(phi2tmp) / h_centers
 
         # Effective transport properties are required at faces between cells
+        # Thomas et al., below Eq 3
         D_eff = eff_factor * self.D_ref() * D(c_faces / self.c_ref())
         kappa_eff = eff_factor * self.cond_ref() * kappa(c_faces / self.c_ref())
 
         # Flux of charge (current density) at faces
+        # Thomas et al., Eq 3
         i = -kappa_eff * (dphi2 - 2*V_thm*(1 - t_p(c_faces))*thermodynamic_factor(c_faces)*dlogc)
+
         # Flux of anions at faces
+        # Based on Thomas et al., Eq 8
+        # Using Thomas et al. Eq 9 and 10, using z_m = -1 and the paragraph below Eq 12 with Eq 13
         N_m = -D_eff*dc - (1 - t_p(c_faces)) * i / self.F()
 
         # Store values for the current density
         for indx in range(N_faces):
             eq = self.CreateEquation("i2_{}".format(indx))
             eq.Residual = self.i2(indx) - i[indx]
+
         # Divergence of fluxes
         di = np.diff(i) / h_faces
         dN_m = np.diff(N_m) / h_faces
         # Electrolyte: mass and charge conservation
         for indx in range(N_centers):
+            # Thomas et al., Eq 11 (used instead of Eq 12 and noting that c_m = c for the electrolyte)
             eq = self.CreateEquation("mass_cons_m_{}".format(indx), "anion mass conservation")
             eq.Residual = poros[indx]*dcdt[indx] + dN_m[indx]
+            # Thomas et al., Eq 27 and 28
             eq = self.CreateEquation("charge_cons_{}".format(indx), "charge conservation")
             eq.Residual = -di[indx] - self.F()*a[indx]*j_p[indx]
 
         # Arbitrary datum for electric potential.
+        # Thomas et al., below Eq 3
         # We apply this in the electrolyte at an arbitrary location, the negative current collector
         eq = self.CreateEquation("phi2_datum")
 #        eq.Residual = phi2[0]
@@ -293,10 +319,18 @@ class ModCell(daeModel):
             eq.Residual = phi1_p[indx] - self.phiCC_p()
 
         # Define the total current.
+        # There are multiple ways to do this. Here, we set the current to be the (negative of the)
+        # integral of the reaction rate into all the particles in the negative electrode.
+        # This is equivalent to setting it equal to
+        # - the integral the reaction rate into all the particles in the positive electrode
+        # - the current density in the electrolyte in the separator (which must be uniform)
+        # - the current density in the solid bulk electrode at the current collector (if using
+        #   finite conductivity in the electron-conducting phase)
         eq = self.CreateEquation("Total_Current")
         eq.Residual = self.current() + np.sum(self.F()*a[:N_n]*j_p[:N_n]*h_centers[:N_n])
 
         # Define the measured voltage
+        # Thomas et al., below Eq 4
         eq = self.CreateEquation("Voltage")
         eq.Residual = self.V() - (self.phiCC_p() - self.phiCC_n())
 
@@ -373,7 +407,7 @@ class SimBattery(daeSimulation):
         self.m.poros_s.SetValue(0.4)
         self.m.poros_p.SetValue(0.3)
         # NOTE: the `quantity(3, unit())` is a temporary hack to avoid a bug in DAE Tools.
-        # It should be replace simply with `3` soon.
+        # It should be replaced simply with `3` soon.
         self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*quantity(3, unit())/self.R_n)
         self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*quantity(3, unit())/self.R_p)
         self.m.D_ref.SetValue(1 * m**2/s)
