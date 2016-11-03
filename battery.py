@@ -10,6 +10,14 @@ of the methodology by Karen E. Thomas, John Newman, and Robert M. Darling,
 K. Thomas, J. Newman, R. Darling, "Mathematical Modeling of Lithium Batteries"
 in "Advances in Lithium-ion Batteries". 2002.
 
+Here, we make a few simplifications rather than implementing the more complete model described there.
+For example, we (currently)
+ - assume infinite conductivity in the electron-conducting phase
+ - assume constant exchange current density and linearize the reaction equation (Butler-Volmer)
+ - assume no electrolyte convection
+ - assume constant and uniform solvent concentration
+
+
 """
 
 V = J/(A*s)
@@ -336,7 +344,8 @@ class ModCell(daeModel):
         dN_m = np.diff(N_m) / h_faces
         # Electrolyte: mass and charge conservation
         for indx in range(N_centers):
-            # Thomas et al., Eq 11 (used instead of Eq 12 and noting that c_m = c for the electrolyte)
+            # Thomas et al., Eq 11
+            # Used instead of Eq 12, which is equivalent, noting that c_m = c for the electrolyte
             eq = self.CreateEquation("mass_cons_m_{}".format(indx), "anion mass conservation")
             eq.Residual = poros[indx]*dcdt[indx] + dN_m[indx]
             # Thomas et al., Eq 27 and 28
