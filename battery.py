@@ -276,16 +276,14 @@ class ModCell(daeModel):
         phi2 = np.array([self.phi2(indx) for indx in range(N_centers)])
         c = np.array([self.c(indx) for indx in range(N_centers)])
         dcdt = np.array([self.c.dt(indx) for indx in range(N_centers)])
-        a = np.hstack((self.a_n()*np.ones(N_n), Constant(1*m**(-1))*np.ones(N_s), self.a_p()*np.ones(N_p)))
+        a = np.array([self.a_n()]*N_n + [Constant(0 * m**(-1))]*N_s + [self.a_p()]*N_p)
         j_p = np.array([self.particles_n[indx].j_p() for indx in range(N_n)]
-                       + N_s*[Constant(0 * mol/(m**2 * s))]
+                       + [Constant(0 * mol/(m**2 * s))]*N_s
                        + [self.particles_p[indx].j_p() for indx in range(N_p)])
-        poros = np.hstack((self.poros_n()*np.ones(N_n),
-                           self.poros_s()*np.ones(N_s),
-                           self.poros_p()*np.ones(N_p)))
-        eff_factor_tmp = np.hstack((self.poros_n() / (self.poros_n()**self.BruggExp_n()) * np.ones(N_n+1),
-                                    self.poros_s() / (self.poros_s()**self.BruggExp_s()) * np.ones(N_s),
-                                    self.poros_p() / (self.poros_p()**self.BruggExp_p()) * np.ones(N_p+1)))
+        poros = np.array([self.poros_n()]*N_n + [self.poros_s()]*N_s + [self.poros_p()]*N_p)
+        eff_factor_tmp = np.array([self.poros_n() / (self.poros_n()**self.BruggExp_n())]*(N_n+1)
+                                  + [self.poros_s() / (self.poros_s()**self.BruggExp_s())]*N_s
+                                  + [self.poros_p() / (self.poros_p()**self.BruggExp_p())]*(N_p+1))
         # The eff_factor is a prefactor for the transport in the porous medium compared to transport
         # in a free solution. It is needed at the cell faces because it is used in calculation of fluxes,
         # so we use a harmonic mean to approximate the value at the faces.
