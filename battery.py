@@ -18,6 +18,7 @@ For example, we (currently)
  - assume constant exchange current density and linearize the reaction equation (Butler-Volmer)
  - assume no electrolyte convection
  - assume constant and uniform solvent concentration
+ - assume no volume occupied by binder, filler, etc. in the electrode
 
 """
 
@@ -104,7 +105,7 @@ def U_p(y):
     return out * units
 
 class ModParticle(daeModel):
-    def __init__(self, Name, pindx1, pindx2, c2, phi2, phi1, Ds, U, Parent=None, Description=""):
+    def __init__(self, Name, pindx1, pindx2, c2, y_avg, phi2, phi1, Ds, U, Parent=None, Description=""):
         daeModel.__init__(self, Name, Parent, Description)
         self.Ds = Ds
         self.U = U
@@ -131,6 +132,7 @@ class ModParticle(daeModel):
         self.phi2 = phi2
         self.c2 = c2
         self.phi1 = phi1
+        self.y_avg = y_avg
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
@@ -169,6 +171,12 @@ class ModParticle(daeModel):
         # For now, we use a linearization of the reaction rate with respect to the driving force, eta.
         eq.Residual = self.j_p() + self.j_0() * eta_ndim
 
+        # For convenience, we also keep track of the average filling fraction in this particle.
+        # This is obtained from integrating the conservation equation over the spherical
+        # particle and applying the divergence theorem.
+        eq = self.CreateEquation("y_avg")
+        eq.Residual = self.y_avg.dt(self.pindx2) - 3*self.j_p()/(self.c_ref()*self.R())
+
 class ModCell(daeModel):
     def __init__(self, Name, Parent=None, Description="", process_info=process_info):
         daeModel.__init__(self, Name, Parent, Description)
@@ -194,6 +202,8 @@ class ModCell(daeModel):
         self.phi1_p.DistributeOnDomain(self.x_centers_p)
         self.phiCC_n = daeVariable("phiCC_n", elec_pot_t, self, "phi at negative current collector")
         self.phiCC_p = daeVariable("phiCC_p", elec_pot_t, self, "phi at positive current collector")
+        self.y_avg = daeVariable("y_avg", no_t, self, "Average filling fraction in the solid")
+        self.y_avg.DistributeOnDomain(self.x_centers_full)
         self.V = daeVariable("V", elec_pot_t, self, "Applied voltage")
         self.current = daeVariable("current", current_dens_t, self, "Total current of the cell")
 
@@ -230,12 +240,12 @@ class ModCell(daeModel):
         for indx in range(N_n):
             indx1 = indx2 = indx
             self.particles_n[indx] = ModParticle("particle_n_{}".format(indx), indx1, indx2, self.c,
-                                                 self.phi2, self.phi1_n, Ds_n, U_n, Parent=self)
+                                                 self.y_avg, self.phi2, self.phi1_n, Ds_n, U_n, Parent=self)
         for indx in range(N_p):
             indx1 = indx
             indx2 = N_n + N_s + indx
             self.particles_p[indx] = ModParticle("particle_p_{}".format(indx), indx1, indx2, self.c,
-                                                 self.phi2, self.phi1_p, Ds_p, U_p, Parent=self)
+                                                 self.y_avg, self.phi2, self.phi1_p, Ds_p, U_p, Parent=self)
 
     def DeclareEquations(self):
         daeModel.DeclareEquations(self)
@@ -362,6 +372,14 @@ class ModCell(daeModel):
         for indx in range(N_p):
             eq = self.CreateEquation("phi1_p_{}".format(indx))
             eq.Residual = phi1_p[indx] - self.phiCC_p()
+
+        # Set the solid average filling fraction to non-changing in the separator region.
+        # The variable shouldn't actually be defined in the separator, but it's convenient
+        # for plotting purposes that it be defined over the full domain, so we simply fix its value
+        # in the separator.
+        for indx in range(N_n, N_n + N_s):
+            eq = self.CreateEquation("y_avg_s_{}".format(indx))
+            eq.Residual = self.y_avg.dt(indx)
 
         # Define the total current.
         # There are multiple ways to do this. Here, we set the current to be the (negative of the)
@@ -496,6 +514,12 @@ class SimBattery(daeSimulation):
         # ModCell
         for indx in range(self.m.x_centers_full.NumberOfPoints):
             self.m.c.SetInitialCondition(indx, 1e3 * mol/m**3)
+            if indx < self.N_n:
+                self.m.y_avg.SetInitialCondition(indx, self.ff0_n)
+            elif indx < self.N_n + self.N_s:
+                self.m.y_avg.SetInitialCondition(indx, 0.)
+            elif indx < self.N_n + self.N_s + self.N_p:
+                self.m.y_avg.SetInitialCondition(indx, self.ff0_p)
         self.m.phi1_n.SetInitialGuesses(U_n(self.ff0_n))
         self.m.phi1_p.SetInitialGuesses(U_p(self.ff0_p))
         self.m.phiCC_n.SetInitialGuess(U_n(self.ff0_n))
