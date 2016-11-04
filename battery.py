@@ -1,7 +1,7 @@
 from daetools.pyDAE import *
 import numpy as np
 
-from pyUnits import m, s, K, mol, J, A
+from pyUnits import m, s, K, mol, J, A, V, S
 
 __doc__ = """Model of a lithium-ion battery based on porous electrode theory as developed
 by John Newman and coworkers. In particular, the equations here are based on a summary
@@ -20,9 +20,6 @@ For example, we (currently)
  - assume constant and uniform solvent concentration
 
 """
-
-V = J/(A*s)
-S = A/V
 
 # Define a few process parameters that we'll use throughout the module.
 # profileType -- constant current (CC) or constant voltage (CV) operation
@@ -48,12 +45,12 @@ rxn_t = daeVariableType(
 def kappa(c):
     """Return the conductivity of the electrolyte in S/m as a function of concentration in M."""
     out = 0.1  # S/m
-    return out
+    return out * Constant(1 * S/m)
 
 def D(c):
     """Return electrolyte diffusivity (in m^2/s) as a function of concentration in M."""
     out = 1e-10  # m**2/s
-    return out
+    return out * Constant(1 * m**2/s)
 
 def thermodynamic_factor(c):
     """Return the electrolyte thermodynamic factor as a function of concentration in M."""
@@ -68,12 +65,12 @@ def t_p(c):
 def Ds_n(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
     out = 5e-9 * y/y  # m**2/s
-    return out
+    return out * Constant(1 * m**2/s)
 
 def Ds_p(y):
     """Return diffusivity (in m^2/s) as a function of solid filling fraction, y."""
     out = 1e-9 * y/y  # m**2/s
-    return out
+    return out * Constant(1 * m**2/s)
 
 def U_n(y):
     """Return the equilibrium potential (V vs Li) of the negative electrode active material
@@ -86,7 +83,8 @@ def U_n(y):
     elif material == "Li metal":
         # Lithium metal
         out = 0.
-    return out  # V
+    units = Constant(1 * V) if isinstance(y, adouble) else V
+    return out * units
 
 def U_p(y):
     """Return the equilibrium potential (V vs Li) of the positive electrode active material
@@ -102,7 +100,8 @@ def U_p(y):
     elif material == "Li metal":
         # Lithium metal
         out = 0.
-    return out  # V
+    units = Constant(1 * V) if isinstance(y, adouble) else V
+    return out * units
 
 class ModParticle(daeModel):
     def __init__(self, Name, pindx1, pindx2, c2, phi2, phi1, Ds, U, Parent=None, Description=""):
@@ -124,8 +123,6 @@ class ModParticle(daeModel):
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
-        self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity in the solid")
-        self.U_ref = daeParameter("U_ref", V, self, "Reference units for equilibrium voltage of the solid")
         self.V_thermal = daeParameter("V_thermal", V, self, "Thermal voltage")
         self.R = daeParameter("R", m, self, "Radius of particle")
 
@@ -144,7 +141,7 @@ class ModParticle(daeModel):
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
         w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.D_ref()*self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
+        eq.Residual = dt(c) - 1/w*d(w * self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
 
         # Symmetry at the center from particles with spherical geometry and symmetry
         # Thomas et al., Eq 18
@@ -158,7 +155,7 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("SurfaceGradient", "D_s*dc/dr = j_+ at r=R_p")
         r = eq.DistributeOnDomain(self.r, eUpperBound)
         c = self.c(r)
-        eq.Residual = self.D_ref()*self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
+        eq.Residual = self.Ds(c/self.c_ref()) * d(c, self.r, eCFDM) - self.j_p()
 
         # The rate of electrochemical reaction calculated via the Butler-Volmer
         # Here, we use a constant exchange current density, but other forms depending on
@@ -166,7 +163,7 @@ class ModParticle(daeModel):
         # Thomas et al., Eq 19 and 27
         eq = self.CreateEquation("SurfaceRxn", "Reaction rate")
         c_surf = self.c(self.r.NumberOfPoints - 1)
-        eta = self.phi1(self.pindx1) - self.phi2(self.pindx2) - self.U_ref()*self.U(c_surf/self.c_ref())
+        eta = self.phi1(self.pindx1) - self.phi2(self.pindx2) - self.U(c_surf/self.c_ref())
         eta_ndim = eta / self.V_thermal()
 #        eq.Residual = self.j_p() - self.j_0() * (np.exp(-self.alpha()*eta_ndim) - np.exp((1 - self.alpha())*eta_ndim))
         # For now, we use a linearization of the reaction rate with respect to the driving force, eta.
@@ -215,11 +212,7 @@ class ModCell(daeModel):
         self.poros_n = daeParameter("poros_n", unit(), self, "porosity in x_n")
         self.poros_s = daeParameter("poros_s", unit(), self, "porosity in x_s")
         self.poros_p = daeParameter("poros_p", unit(), self, "porosity in x_p")
-        self.D_ref = daeParameter("D_ref", m**2/s, self, "Reference units for diffusivity")
-        self.cond_ref = daeParameter("cond_ref", S/m, self, "Reference units for conductivity")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Reference electrolyte concentration")
-        self.j_ref = daeParameter("j_ref", mol/(m**2 * s), self, "Reference units for reaction")
-        self.a_ref = daeParameter("a_ref", m**(-1), self, "Reference units for area/volume")
         self.currset = daeParameter("currset", A/m**2, self, "current per electrode area")
         self.Vset = daeParameter("Vset", V, self, "applied voltage set point")
         self.tau_ramp = daeParameter("tau_ramp", s, self, "Time scale for ramping voltage or current")
@@ -283,9 +276,9 @@ class ModCell(daeModel):
         phi2 = np.array([self.phi2(indx) for indx in range(N_centers)])
         c = np.array([self.c(indx) for indx in range(N_centers)])
         dcdt = np.array([self.c.dt(indx) for indx in range(N_centers)])
-        a = np.hstack((self.a_n()*np.ones(N_n), self.a_ref()*np.ones(N_s), self.a_p()*np.ones(N_p)))
+        a = np.hstack((self.a_n()*np.ones(N_n), Constant(1*m**(-1))*np.ones(N_s), self.a_p()*np.ones(N_p)))
         j_p = np.array([self.particles_n[indx].j_p() for indx in range(N_n)]
-                       + N_s*[0 * self.j_ref()]
+                       + N_s*[Constant(0 * mol/(m**2 * s))]
                        + [self.particles_p[indx].j_p() for indx in range(N_p)])
         poros = np.hstack((self.poros_n()*np.ones(N_n),
                            self.poros_s()*np.ones(N_s),
@@ -323,8 +316,8 @@ class ModCell(daeModel):
 
         # Effective transport properties are required at faces between cells
         # Thomas et al., below Eq 3
-        D_eff = eff_factor * self.D_ref() * D(c_faces / self.c_ref())
-        kappa_eff = eff_factor * self.cond_ref() * kappa(c_faces / self.c_ref())
+        D_eff = eff_factor * D(c_faces / self.c_ref())
+        kappa_eff = eff_factor * kappa(c_faces / self.c_ref())
 
         # Flux of charge (current density) at faces
         # Thomas et al., Eq 3
@@ -469,11 +462,7 @@ class SimBattery(daeSimulation):
         # It should be replaced simply with `3` soon.
         self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*quantity(3, unit())/self.R_n)
         self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*quantity(3, unit())/self.R_p)
-        self.m.D_ref.SetValue(1 * m**2/s)
-        self.m.cond_ref.SetValue(1 * S/m)
         self.m.c_ref.SetValue(1000 * mol/m**3)
-        self.m.j_ref.SetValue(1 * mol/(m**2 * s))
-        self.m.a_ref.SetValue(1 * m**(-1))
         self.m.currset.SetValue(3e+1 * A/m**2)
         self.m.Vset.SetValue(1.9 * V)
         self.m.tau_ramp.SetValue(1e-3 * process_info["tend"])
@@ -489,8 +478,6 @@ class SimBattery(daeSimulation):
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
-            p.D_ref.SetValue(1 * m**2/s)
-            p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetQuantity()*self.m.T.GetQuantity()/self.m.F.GetQuantity())
             p.R.SetValue(self.R_n)
         for indx_p in range(self.m.x_centers_p.NumberOfPoints):
@@ -502,8 +489,6 @@ class SimBattery(daeSimulation):
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
-            p.D_ref.SetValue(1 * m**2/s)
-            p.U_ref.SetValue(1 * V)
             p.V_thermal.SetValue(self.m.R.GetQuantity()*self.m.T.GetQuantity()/self.m.F.GetQuantity())
             p.R.SetValue(self.R_p)
 
@@ -513,10 +498,10 @@ class SimBattery(daeSimulation):
         # ModCell
         for indx in range(self.m.x_centers_full.NumberOfPoints):
             self.m.c.SetInitialCondition(indx, 1e3 * mol/m**3)
-        self.m.phi1_n.SetInitialGuesses(U_n(self.ff0_n) * V)
-        self.m.phiCC_n.SetInitialGuess(U_n(self.ff0_n) * V)
-        self.m.phi1_p.SetInitialGuesses(U_p(self.ff0_p) * V)
-        self.m.phiCC_p.SetInitialGuess(U_p(self.ff0_p) * V)
+        self.m.phi1_n.SetInitialGuesses(U_n(self.ff0_n))
+        self.m.phi1_p.SetInitialGuesses(U_p(self.ff0_p))
+        self.m.phiCC_n.SetInitialGuess(U_n(self.ff0_n))
+        self.m.phiCC_p.SetInitialGuess(U_p(self.ff0_p))
         # particles
         for indx_n in range(self.m.x_centers_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
