@@ -119,8 +119,6 @@ class ModParticle(daeModel):
         self.j_p = daeVariable("j_p", rxn_t, self, "Rate of reaction into the solid")
 
         # Parameter
-        self.w = daeParameter("w", m**2, self, "Weight factor for operators")
-        self.w.DistributeOnDomain(self.r)
         self.j_0 = daeParameter("j_0", mol/(m**2 * s), self, "Exchange current density / F")
         self.alpha = daeParameter("alpha", unit(), self, "Reaction symmetry factor")
         self.c_ref = daeParameter("c_ref", mol/m**3, self, "Max conc of species in the solid")
@@ -142,8 +140,12 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("mass_cons")
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
-        w = self.w(r)
-        eq.Residual = dt(c) - 1/w*d(w * self.Ds(c/self.c_ref())*d(c, self.r, eCFDM), self.r, eCFDM)
+        # N.B. DAE Tools currently don't differentiate spatially varying parameters,
+        # so we product rule out the following
+        # 1/r**2 * d(r**2 * D * d(c)) = 2/r*D*d(c) + d(D*d(c))
+        dc = d(c, self.r, eCFDM)
+        D = self.Ds(c/self.c_ref())
+        eq.Residual = dt(c) - (2/r()*D*dc + d(D*dc, self.r, eCFDM))
 
         # Symmetry at the center from particles with spherical geometry and symmetry
         # Thomas et al., Eq 18
@@ -487,10 +489,6 @@ class SimBattery(daeSimulation):
         # Parameters in each particle
         for indx_n in range(self.m.x_centers_n.NumberOfPoints):
             p = self.m.particles_n[indx_n]
-            N = p.r.NumberOfPoints
-            rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.R_n.value, N) * m
-            p.w.SetValues(rvec**2)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_n)
@@ -498,10 +496,6 @@ class SimBattery(daeSimulation):
             p.R.SetValue(self.R_n)
         for indx_p in range(self.m.x_centers_p.NumberOfPoints):
             p = self.m.particles_p[indx_p]
-            N = p.r.NumberOfPoints
-            rvec = np.empty(N, dtype=object)
-            rvec[:] = np.linspace(0, self.R_p.value, N) * m
-            p.w.SetValues(rvec**2)
             p.j_0.SetValue(1e-4 * mol/(m**2 * s))
             p.alpha.SetValue(0.5)
             p.c_ref.SetValue(self.csmax_p)
