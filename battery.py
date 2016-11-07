@@ -18,16 +18,10 @@ For example, we (currently)
  - assume constant exchange current density and linearize the reaction equation (Butler-Volmer)
  - assume no electrolyte convection
  - assume constant and uniform solvent concentration
+ - assume monodisperse particles in electrode
  - assume no volume occupied by binder, filler, etc. in the electrode
 
 """
-
-# Define a few process parameters that we'll use throughout the module.
-# profileType -- constant current (CC) or constant voltage (CV) operation
-# tend -- time at which to stop the simulation
-process_info = {"profileType": "CC",
-                "tend": 2*3200e0 * s,
-                }
 
 # Define some variable types
 conc_t = daeVariableType(
@@ -180,7 +174,7 @@ class ModParticle(daeModel):
         eq.Residual = self.y_avg.dt(self.pindx2) - 3*self.j_p()/(self.c_ref()*self.R())
 
 class ModCell(daeModel):
-    def __init__(self, Name, Parent=None, Description="", process_info=process_info):
+    def __init__(self, Name, Parent=None, Description="", process_info=None):
         daeModel.__init__(self, Name, Parent, Description)
         self.process_info = process_info
 
@@ -416,23 +410,55 @@ class ModCell(daeModel):
 class SimBattery(daeSimulation):
     def __init__(self):
         daeSimulation.__init__(self)
+        self.F = 96485.34 * A*s/mol
         # Define the model we're going to simulate
+        # Constant current (CC) or constant voltage (CV) simulation
+        profileType = "CC"
+        # Time at which to stop the simulation (used for CV simulations)
+        tend = 2*3200e0 * s
+        # Fraction of battery capacity to (dis)charge (used for CC simulations)
+        capfrac = 0.90
+        # Applied current or voltage (used in CC and CV simulations respectively)
+        self.currset = 3e+1 * A/m**2
+        self.Vset = 3.5 * V
+        # Lenghts of regions of battery, negative electrode, separator, positive electrode
         self.L_n = 243e-6 * m
         self.L_s = 50e-6 * m
         self.L_p = 200e-6 * m
+        # Porosies in each region
+        self.poros_n = 0.3
+        self.poros_s = 1.0
+        self.poros_p = 0.3
         self.L_tot = self.L_n + self.L_s + self.L_p
+        # Number of grid points in each region
         self.N_n = 20
         self.N_s = 20
         self.N_p = 20
-        self.NR_n = 10
-        self.NR_p = 10
+        # Number of radial grid points for active particles in each electrode
+        self.NR_n = 15
+        self.NR_p = 15
+        # Radius of active particles in each electrode
         self.R_n = 18e-6 * m
         self.R_p = 1e-6 * m
+        # Maximum concentration of Li in the active materials
         self.csmax_n = 13.2e3 * mol/m**3
         self.csmax_p = 23.72e3 * mol/m**3
+        # Initial filling fraction of each electrode.
+        # For discharge, negative starts full and positive empty, opposite for charge
         self.ff0_n = 0.99
         self.ff0_p = 0.21
-        self.process_info = process_info
+        # Capacity of each electrode
+        capacity_n = self.csmax_n*(1 - self.poros_n)*self.L_n*self.F
+        capacity_p = self.csmax_p*(1 - self.poros_p)*self.L_p*self.F
+#        print("cap n, p", capacity_n, capacity_p)
+#        print("cap p/n", capacity_p / capacity_n)
+#        zz
+        # Capacity of battery
+        capacity = min(capacity_n, capacity_p)
+        if profileType == "CC":
+            tend = capfrac * capacity / self.currset
+        self.process_info = {"profileType": profileType, "tend": tend}
+
         self.process_info["N_n"] = self.N_n
         self.process_info["N_s"] = self.N_s
         self.process_info["N_p"] = self.N_p
@@ -464,7 +490,7 @@ class SimBattery(daeSimulation):
         for indx_p in range(self.m.x_centers_p.NumberOfPoints):
             self.m.particles_p[indx_p].r.CreateStructuredGrid(self.NR_p - 1, 0, self.R_p.value)
         # Parameters in ModCell
-        self.m.F.SetValue(96485.34 * A*s/mol)
+        self.m.F.SetValue(self.F)
         self.m.R.SetValue(8.31447 * J/(mol*K))
         self.m.T.SetValue(298 * K)
         self.m.L_n.SetValue(self.L_n)
@@ -473,17 +499,17 @@ class SimBattery(daeSimulation):
         self.m.BruggExp_n.SetValue(-0.5)
         self.m.BruggExp_s.SetValue(-0.5)
         self.m.BruggExp_p.SetValue(-0.5)
-        self.m.poros_n.SetValue(0.3)
-        self.m.poros_s.SetValue(0.4)
-        self.m.poros_p.SetValue(0.3)
+        self.m.poros_n.SetValue(self.poros_n)
+        self.m.poros_s.SetValue(self.poros_s)
+        self.m.poros_p.SetValue(self.poros_p)
         # NOTE: the `quantity(3, unit())` is a temporary hack to avoid a bug in DAE Tools.
         # It should be replaced simply with `3` soon.
         self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*quantity(3, unit())/self.R_n)
         self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*quantity(3, unit())/self.R_p)
         self.m.c_ref.SetValue(1000 * mol/m**3)
-        self.m.currset.SetValue(3e+1 * A/m**2)
-        self.m.Vset.SetValue(1.9 * V)
-        self.m.tau_ramp.SetValue(1e-3 * process_info["tend"])
+        self.m.currset.SetValue(self.currset)
+        self.m.Vset.SetValue(self.Vset)
+        self.m.tau_ramp.SetValue(1e-3 * self.process_info["tend"])
         self.m.xval_cells.SetValues(np.array(xvec_centers))
         self.m.xval_faces.SetValues(np.array(xvec_faces))
         # Parameters in each particle
@@ -549,8 +575,8 @@ def consoleRun():
     simulation.m.SetReportingOn(True)
 
     # Set the time horizon and the reporting interval
-    simulation.ReportingInterval = process_info["tend"].value / 100
-    simulation.TimeHorizon = process_info["tend"].value
+    simulation.ReportingInterval = simulation.process_info["tend"].value / 100
+    simulation.TimeHorizon = simulation.process_info["tend"].value
 
     # Connect data reporter
     simName = simulation.m.Name + strftime(" [%d.%m.%Y %H:%M:%S]", localtime())
