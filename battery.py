@@ -523,10 +523,8 @@ class SimBattery(daeSimulation):
         self.m.poros_n.SetValue(self.poros_n)
         self.m.poros_s.SetValue(self.poros_s)
         self.m.poros_p.SetValue(self.poros_p)
-        # NOTE: the `quantity(3, unit())` is a temporary hack to avoid a bug in DAE Tools.
-        # It should be replaced simply with `3` soon.
-        self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*quantity(3, unit())/self.R_n)
-        self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*quantity(3, unit())/self.R_p)
+        self.m.a_n.SetValue((1-self.m.poros_n.GetQuantity())*3/self.R_n)
+        self.m.a_p.SetValue((1-self.m.poros_p.GetQuantity())*3/self.R_p)
         self.m.c_ref.SetValue(1000 * mol/m**3)
         self.m.currset.SetValue(self.currset)
         self.m.Vset.SetValue(self.Vset)
