@@ -155,12 +155,9 @@ class ModParticle(daeModel):
         eq = self.CreateEquation("mass_cons")
         r = eq.DistributeOnDomain(self.r, eOpenOpen)
         c = self.c(r)
-        # N.B. DAE Tools currently don't differentiate spatially varying parameters,
-        # so we product rule out the following
-        # 1/r**2 * d(r**2 * D * d(c)) = 2/r*D*d(c) + d(D*d(c))
         dc = d(c, self.r, eCFDM)
         D = self.Ds(c/self.c_ref())
-        eq.Residual = dt(c) - (2/r()*D*dc + d(D*dc, self.r, eCFDM))
+        eq.Residual = dt(c) - 1/r()**2*d(r()**2*D*dc, self.r, eCFDM)
 
         # Symmetry at the center from particles with spherical geometry and symmetry
         # Thomas et al., Eq 18
