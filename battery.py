@@ -1,25 +1,46 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+***********************************************************************************
+                          battery.py
+                Copyright (C) Raymond B. Smith, 2016
+***********************************************************************************
+This program is free software; you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3 as published by the Free Software
+Foundation. This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along with the
+DAE Tools software; if not, see <http://www.gnu.org/licenses/>.
+************************************************************************************
+"""
+
 from daetools.pyDAE import *
 import numpy as np
 
 from pyUnits import m, s, K, mol, J, A, V, S
 
-__doc__ = """Model of a lithium-ion battery based on porous electrode theory as developed
+__doc__ = """
+Model of a lithium-ion battery based on porous electrode theory as developed
 by John Newman and coworkers. In particular, the equations here are based on a summary
 of the methodology by Karen E. Thomas, John Newman, and Robert M. Darling,
 
-K. Thomas, J. Newman, R. Darling, "Mathematical Modeling of Lithium Batteries"
-in "Advances in Lithium-ion Batteries". 2002.
+Thomas K., Newman J., Darling R. (2002). Mathematical Modeling of Lithium Batteries
+in Advances in Lithium-ion Batteries. Springer US. 345-392.
+'doi:10.1007/0-306-47508-1_13 <http://dx.doi.org/10.1007/0-306-47508-1_13>'
 
-Here, we make a few simplifications rather than implementing the more complete model described there.
-For example, we (currently)
- - assume we have two porous electrodes rather than providing the option for a "half cell" in which
-   one electrode is lithium foil.
- - assume infinite conductivity in the electron-conducting phase
- - assume constant exchange current density and linearize the reaction equation (Butler-Volmer)
- - assume no electrolyte convection
- - assume constant and uniform solvent concentration
- - assume monodisperse particles in electrode
- - assume no volume occupied by binder, filler, etc. in the electrode
+A few simplifications have been made rather than implementing the more complete model described there.
+For example, the following assumptions have (currently) been made:
+
+- two porous electrodes are used rather than providing the option for a "half cell" in which
+  one electrode is lithium foil.
+- conductivity in the electron-conducting phase is infinite
+- constant exchange current density and linearized reaction equation (Butler-Volmer)
+- no electrolyte convection
+- constant and uniform solvent concentration (ions vary according to concentrated solution theory)
+- monodisperse particles in electrode
+- no volume occupied by binder, filler, etc. in the electrode
 
 """
 
