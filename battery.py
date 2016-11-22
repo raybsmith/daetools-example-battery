@@ -28,7 +28,7 @@ of the methodology by Karen E. Thomas, John Newman, and Robert M. Darling,
 
 Thomas K., Newman J., Darling R. (2002). Mathematical Modeling of Lithium Batteries
 in Advances in Lithium-ion Batteries. Springer US. 345-392.
-'doi:10.1007/0-306-47508-1_13 <http://dx.doi.org/10.1007/0-306-47508-1_13>'
+`doi:10.1007/0-306-47508-1_13 <http://dx.doi.org/10.1007/0-306-47508-1_13>`_
 
 A few simplifications have been made rather than implementing the more complete model described there.
 For example, the following assumptions have (currently) been made:
