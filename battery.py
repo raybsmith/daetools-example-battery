@@ -372,7 +372,6 @@ class ModCell(daeModel):
         # Thomas et al., below Eq 3
         # We apply this in the electrolyte at an arbitrary location, the negative current collector
         eq = self.CreateEquation("phi2_datum")
-#        eq.Residual = phi2[0]
         eq.Residual = self.phiCC_n()
 
         # Electrode: charge conservation
@@ -468,9 +467,6 @@ class SimBattery(daeSimulation):
         # Capacity of each electrode
         capacity_n = self.csmax_n*(1 - self.poros_n)*self.L_n*self.F
         capacity_p = self.csmax_p*(1 - self.poros_p)*self.L_p*self.F
-#        print("cap n, p", capacity_n, capacity_p)
-#        print("cap p/n", capacity_p / capacity_n)
-#        zz
         # Capacity of battery
         capacity = min(capacity_n, capacity_p)
         if profileType == "CC":
